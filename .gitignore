@@ -1,0 +1,71 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Package managers (keep package-lock.json committed for reproducible CI)
+.npm/
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnpm-store/
+pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+wallet.json
+**/auth.json
+**/wallet/*.json
+!**/wallet/.gitkeep
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Test & coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Logs & temp
+logs/
+*.log
+tmp/
+temp/
+.cache/
+
+# Go (future adapters)
+bin/
+vendor/
+
+# Local dev artifacts
+examples/**/node_modules/
+.local/
+*.local.json
+
+# Optional: do not commit Pi/OpenCode host checkouts
+vendor/pi/
+vendor/opencode/
+vendor/openclaw/

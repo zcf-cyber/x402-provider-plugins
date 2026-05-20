@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": [
+    "../../packages/opencode-x402/dist/index.js"
+  ],
+  "env": {
+    "X402_GATEWAY_URL": "http://127.0.0.1:8080",
+    "X402_WALLET_ADDRESS": "",
+    "X402_CHAIN_ID": "eip155:8453",
+    "X402_ENABLED": "true"
+  }
+}
