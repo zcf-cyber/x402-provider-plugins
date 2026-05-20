@@ -8,6 +8,10 @@ dist/
 build/
 out/
 *.tsbuildinfo
+packages/pi-x402/extensions/*.js
+packages/pi-x402/extensions/*.js.map
+packages/pi-x402/extensions/*.d.ts
+packages/pi-x402/extensions/*.d.ts.map
 
 # Package managers (keep package-lock.json committed for reproducible CI)
 .npm/
