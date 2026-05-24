@@ -6,3 +6,4 @@ export type {
   X402Signer,
 } from "./types.js";
 export { createX402Fetch } from "./client.js";
+export { EvmSigner } from "./signer.js";
