@@ -141,32 +141,6 @@ export function createX402Fetch(
   // Create HTTP client wrapper
   const httpClient = new x402HTTPClient(x402ClientInstance);
 
-  // Register audit hook if provided
-  if (audit) {
-    x402ClientInstance.onAfterPaymentCreation(async (context) => {
-      audit({
-        at: new Date().toISOString(),
-        requestId: generateRequestId(),
-        phase: "signed",
-        detail: `payment created for ${context.paymentRequired.resource}`,
-      });
-    });
-
-    x402ClientInstance.onPaymentResponse(async (context) => {
-      const phase = context.settleResponse
-        ? context.settleResponse.success
-          ? "settled"
-          : "error"
-        : "retry";
-      audit({
-        at: new Date().toISOString(),
-        requestId: generateRequestId(),
-        phase,
-        detail: phase === "error" ? "payment failed" : `payment ${phase}`,
-      });
-    });
-  }
-
   // Wrap the base fetch with payment handling
   const wrappedFetch = wrapFetchWithPayment(baseFetch, httpClient);
 
@@ -176,6 +150,32 @@ export function createX402Fetch(
     init?: Parameters<typeof fetch>[1],
   ): Promise<Awaited<ReturnType<typeof fetch>>> => {
     const requestId = generateRequestId();
+
+    // Register audit hook if provided (moved inside to share requestId)
+    if (audit) {
+      x402ClientInstance.onAfterPaymentCreation(async (context) => {
+        audit({
+          at: new Date().toISOString(),
+          requestId, // Use the same requestId for correlation
+          phase: "signed",
+          detail: `payment created for ${context.paymentRequired.resource}`,
+        });
+      });
+
+      x402ClientInstance.onPaymentResponse(async (context) => {
+        const phase = context.settleResponse
+          ? context.settleResponse.success
+            ? "settled"
+            : "error"
+          : "retry";
+        audit({
+          at: new Date().toISOString(),
+          requestId, // Use the same requestId for correlation
+          phase,
+          detail: phase === "error" ? "payment failed" : `payment ${phase}`,
+        });
+      });
+    }
 
     // Check if signer is ready before making request
     if (!(await signer.isReady())) {
@@ -290,8 +290,7 @@ function getNetworkId(chainId: string, protocolVersion: number): string {
       if (chainNum === "137") return "polygon";
       if (chainNum === "42161") return "arbitrum";
       if (chainNum === "10") return "optimism";
-      if (chainNum === "8453") return "base";
-      if (chainNum === "84532") return "base-sepolia";
+      // Note: 8453 (base) and 84532 (base-sepolia) are already handled above
     }
     return chainId.replace("eip155:", "");
   }
