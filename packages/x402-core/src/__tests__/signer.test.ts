@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { verifyMessage } from "viem";
 import { EvmSigner } from "../signer.js";
 
 // Hardhat test account #0 private key and expected address
@@ -70,7 +71,7 @@ describe("EvmSigner", () => {
   });
 
   describe("signPayment", () => {
-    it("should return PAYMENT-SIGNATURE header with valid signature", async () => {
+    it("should return PAYMENT-SIGNATURE header with cryptographically valid signature", async () => {
       const signer = new EvmSigner();
 
       const paymentRequired = {
@@ -91,7 +92,28 @@ describe("EvmSigner", () => {
 
       expect(result).toHaveProperty("PAYMENT-SIGNATURE");
       expect(typeof result["PAYMENT-SIGNATURE"]).toBe("string");
-      expect(result["PAYMENT-SIGNATURE"].startsWith("0x")).toBe(true);
+      expect(result["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
+
+      // Verify the signature cryptographically recovers the signer's address
+      const expectedMessage = [
+        "x402 Payment Authorization",
+        "Version: 2",
+        "Network: eip155:8453",
+        "PayTo: 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "Amount: 1000000",
+        "Asset: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "Resource: /v1/chat/completions",
+        "Timeout: 300s",
+        `Chain: ${signer.chainId}`,
+      ].join("\n");
+
+      const isValid = await verifyMessage({
+        address: TEST_ADDRESS as `0x${string}`,
+        message: expectedMessage,
+        signature: result["PAYMENT-SIGNATURE"] as `0x${string}`,
+      });
+
+      expect(isValid).toBe(true);
     });
 
     it("should throw when signer is not ready", async () => {
@@ -135,16 +157,14 @@ describe("EvmSigner", () => {
         ],
       };
 
-      // Note: signatures include timestamp, so they won't be exactly identical
-      // but the format should be consistent
       const result1 = await signer.signPayment(paymentRequired);
       const result2 = await signer.signPayment(paymentRequired);
 
-      expect(result1["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
-      expect(result2["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
+      // Without timestamp, same payload must produce identical signatures
+      expect(result1["PAYMENT-SIGNATURE"]).toBe(result2["PAYMENT-SIGNATURE"]);
     });
 
-    it("should handle V1 payment requirements format", async () => {
+    it("should handle V1 payment requirements with maxAmountRequired", async () => {
       const signer = new EvmSigner();
 
       const paymentRequired = {
@@ -163,6 +183,25 @@ describe("EvmSigner", () => {
 
       expect(result).toHaveProperty("PAYMENT-SIGNATURE");
       expect(result["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
+
+      // Verify maxAmountRequired appears in the signed message
+      const expectedMessage = [
+        "x402 Payment Authorization",
+        "Version: 1",
+        "Network: base-sepolia",
+        "PayTo: 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
+        "MaxAmount: 1000000",
+        "Resource: /v1/chat/completions",
+        `Chain: ${signer.chainId}`,
+      ].join("\n");
+
+      const isValid = await verifyMessage({
+        address: TEST_ADDRESS as `0x${string}`,
+        message: expectedMessage,
+        signature: result["PAYMENT-SIGNATURE"] as `0x${string}`,
+      });
+
+      expect(isValid).toBe(true);
     });
   });
 });

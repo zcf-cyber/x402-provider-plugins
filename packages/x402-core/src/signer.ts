@@ -6,7 +6,7 @@ import type { X402Signer } from "./types.js";
  * EVM wallet signer implementing the X402Signer interface.
  *
  * Reads the private key from the X402_PRIVATE_KEY environment variable
- * and derives the Ethereum address. Supports EIP-712 typed data signing
+ * and derives the Ethereum address. Uses personal_sign message signing
  * for x402 payment authorization.
  *
  * @example
@@ -77,6 +77,9 @@ export class EvmSigner implements X402Signer {
    * Takes the raw PAYMENT-REQUIRED content and produces a signature
    * suitable for the PAYMENT-SIGNATURE header.
    *
+   * The returned key is always "PAYMENT-SIGNATURE" regardless of protocol
+   * version; header name mapping belongs to the caller (P0-PR2).
+   *
    * @param paymentRequiredRaw - The decoded PAYMENT-REQUIRED header or body
    * @returns A record with the PAYMENT-SIGNATURE header
    * @throws If the signer is not ready or signing fails
@@ -128,6 +131,8 @@ export class EvmSigner implements X402Signer {
           if (a.network) parts.push(`Network: ${String(a.network)}`);
           if (a.payTo) parts.push(`PayTo: ${String(a.payTo)}`);
           if (a.amount) parts.push(`Amount: ${String(a.amount)}`);
+          if (a.maxAmountRequired)
+            parts.push(`MaxAmount: ${String(a.maxAmountRequired)}`);
           if (a.asset) parts.push(`Asset: ${String(a.asset)}`);
           if (a.resource) parts.push(`Resource: ${String(a.resource)}`);
           if (a.maxTimeoutSeconds)
@@ -136,9 +141,13 @@ export class EvmSigner implements X402Signer {
       }
     }
 
+    // Add replay-protection fields from payment requirements if available
+    if (req.expires_at) parts.push(`Expires: ${String(req.expires_at)}`);
+    if (req.challenge_token)
+      parts.push(`Challenge: ${String(req.challenge_token)}`);
+
     // Add chain ID for replay protection
     parts.push(`Chain: ${this._chainId}`);
-    parts.push(`Timestamp: ${Math.floor(Date.now() / 1000)}`);
 
     return parts.join("\n");
   }
