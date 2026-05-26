@@ -14,10 +14,12 @@ import http from "http";
 import crypto from "crypto";
 
 const args = process.argv.slice(2);
-const port = parseInt(
-  args.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "8080",
-  10,
-);
+const portArg = args.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "8080";
+const port = parseInt(portArg, 10);
+if (isNaN(port) || port < 1 || port > 65535) {
+  console.error(`x402: invalid port "${portArg}" — must be 1–65535`);
+  process.exit(1);
+}
 const requireAmount =
   args.find((a) => a.startsWith("--require-amount="))?.split("=")[1] ??
   "1000000";
@@ -93,7 +95,22 @@ function isValidSignature(headerValue) {
 }
 
 const server = http.createServer((req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const host = req.headers.host;
+  if (!host) {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Missing Host header" }));
+    return;
+  }
+
+  let url;
+  try {
+    url = new URL(req.url, `http://${host}`);
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "Invalid URL" }));
+    return;
+  }
+
   const sig =
     req.headers["payment-signature"] || req.headers["x-payment"];
 
@@ -128,3 +145,5 @@ server.listen(port, () => {
     `Endpoints: any path returns 402 → 200 on retry with PAYMENT-SIGNATURE`,
   );
 });
+
+server.timeout = 30000;
