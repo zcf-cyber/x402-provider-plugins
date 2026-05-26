@@ -162,7 +162,13 @@ describe("x402-core integration against mock gateway", () => {
 
     await expect(
       fetchWithPayment(`http://127.0.0.1:${port}/v1/chat/completions`),
-    ).rejects.toThrow();
+    ).rejects.toSatisfy((err: Error) => {
+      // Must be an abort/timeout error, not a generic failure
+      return (
+        err.name === "AbortError" ||
+        /aborted|timeout|signal/i.test(err.message)
+      );
+    });
 
     server.closeAllConnections?.();
     server.close();
