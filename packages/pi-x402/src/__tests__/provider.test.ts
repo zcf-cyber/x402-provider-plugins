@@ -94,6 +94,36 @@ describe("registerX402Provider", () => {
     expect(chunks).toEqual([{ content: "Hello ", role: "assistant" }, { content: "world" }]);
   });
 
+  it("throws on non-200 gateway response", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 500 }));
+    vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
+    registerX402Provider(pi);
+    const streamSimple = registered!.streamSimple as (
+      params: Record<string, unknown>, ctx?: ExtensionContext,
+    ) => AsyncGenerator<{ content: string; role?: string }>;
+    await expect(
+      (async () => {
+        for await (const _ of streamSimple({ model: "default", messages: [] }, ctx)) { /* consume */ }
+      })(),
+    ).rejects.toThrow("x402: gateway returned 500");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("500"), "error");
+  });
+
+  it("throws on empty response body", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
+    registerX402Provider(pi);
+    const streamSimple = registered!.streamSimple as (
+      params: Record<string, unknown>, ctx?: ExtensionContext,
+    ) => AsyncGenerator<{ content: string; role?: string }>;
+    await expect(
+      (async () => {
+        for await (const _ of streamSimple({ model: "default", messages: [] }, ctx)) { /* consume */ }
+      })(),
+    ).rejects.toThrow("x402: gateway returned empty body");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("empty body"), "error");
+  });
+
   it("surfaces fetch errors via ctx.ui.notify", async () => {
     const fetchFn = vi.fn().mockRejectedValue(new Error("network timeout"));
     vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
