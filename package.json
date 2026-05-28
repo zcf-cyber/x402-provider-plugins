@@ -15,6 +15,7 @@
     "build": "npm run build -w @x402-plugins/core && npm run build -w @x402-plugins/pi-x402 && npm run build -w @x402-plugins/opencode-x402 && npm run build -w @x402-plugins/openclaw-x402",
     "clean": "rm -rf packages/*/dist",
     "typecheck": "npm run typecheck -ws --if-present",
-    "install:pi-extensions": "node scripts/install-pi-extensions.mjs"
+    "install:pi-extensions": "node scripts/install-pi-extensions.mjs",
+    "smoke": "node scripts/smoke-test.mjs"
   }
 }
