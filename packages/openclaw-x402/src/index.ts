@@ -54,15 +54,16 @@ export function registerOpenClawX402(api: {
       }
 
       let data: unknown;
+      let text: string;
       try {
         data = await response.json();
+        text = extractText(data);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         api.log?.(`[x402] runAttempt parse error: ${message}`);
         throw new Error(`x402: failed to parse gateway response — ${message}`);
       }
 
-      const text = extractText(data);
       api.log?.(`[x402] runAttempt completed — provider="${providerId}"`);
       return { text, raw: data };
     },
@@ -72,17 +73,21 @@ export function registerOpenClawX402(api: {
 }
 
 function extractText(data: unknown): string {
-  if (!data || typeof data !== "object") return "";
+  if (!data || typeof data !== "object") {
+    throw new Error("x402: gateway response is not a valid object");
+  }
   const d = data as Record<string, unknown>;
   const choices = d.choices as Array<Record<string, unknown>> | undefined;
-  if (!choices || !choices.length) return "";
+  if (!choices || !choices.length) {
+    throw new Error("x402: gateway response missing choices array");
+  }
   const first = choices[0];
   if (first.message && typeof first.message === "object") {
     const msg = first.message as Record<string, unknown>;
     if (typeof msg.content === "string") return msg.content;
   }
   if (typeof first.text === "string") return first.text;
-  return "";
+  throw new Error("x402: gateway response missing content in first choice");
 }
 
 export default function createPlugin() {

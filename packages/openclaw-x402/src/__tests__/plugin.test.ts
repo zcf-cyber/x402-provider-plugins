@@ -94,6 +94,63 @@ describe("registerOpenClawX402", () => {
     });
   });
 
+  it("throws when signer is not ready", async () => {
+    const errorFn = vi.fn().mockRejectedValue(
+      new Error("x402: wallet signer not ready — connect wallet before paid requests"),
+    );
+    vi.mocked(createX402Fetch).mockReturnValue(errorFn);
+    registerOpenClawX402(api, { gatewayBaseUrl: "http://127.0.0.1:8080" });
+    const runAttempt = registered!.runAttempt as (params: {
+      prompt: string;
+    }) => Promise<unknown>;
+    await expect(runAttempt({ prompt: "test" })).rejects.toThrow(
+      "x402: wallet signer not ready",
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("wallet signer not ready"),
+    );
+  });
+
+  it("throws when gateway returns non-200 status", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: "insufficient funds" }),
+        { status: 402 },
+      ),
+    );
+    vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
+    registerOpenClawX402(api, { gatewayBaseUrl: "http://127.0.0.1:8080" });
+    const runAttempt = registered!.runAttempt as (params: {
+      prompt: string;
+    }) => Promise<unknown>;
+    await expect(runAttempt({ prompt: "test" })).rejects.toThrow(
+      "x402: gateway returned 402",
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("402"),
+    );
+  });
+
+  it("throws when response format is invalid", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({}),
+        { status: 200 },
+      ),
+    );
+    vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
+    registerOpenClawX402(api, { gatewayBaseUrl: "http://127.0.0.1:8080" });
+    const runAttempt = registered!.runAttempt as (params: {
+      prompt: string;
+    }) => Promise<unknown>;
+    await expect(runAttempt({ prompt: "test" })).rejects.toThrow(
+      "x402: gateway response missing choices array",
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("gateway response missing choices array"),
+    );
+  });
+
   it("error path logs and throws appropriately", async () => {
     const fetchFn = vi.fn().mockRejectedValue(new Error("network down"));
     vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
