@@ -13,7 +13,7 @@ export interface OpenCodeX402PluginConfig extends X402ClientConfig {
 }
 
 export function createOpenCodeX402Hooks(config: OpenCodeX402PluginConfig) {
-  const signer = new EvmSigner(config.protocolVersion === 1 ? undefined : undefined);
+  const signer = new EvmSigner();
   const x402Fetch = createX402Fetch(config, signer);
 
   return {
@@ -36,17 +36,13 @@ export function createOpenCodeX402Hooks(config: OpenCodeX402PluginConfig) {
     },
 
     /** Called by host before executing a paid tool — gate on wallet readiness */
-    async toolExecuteBefore(ctx: { tool: string; estimatedCost?: string }) {
+    async toolExecuteBefore(_ctx: { tool: string; estimatedCost?: string }) {
       const ready = await signer.isReady();
       if (!ready) {
         throw new Error("x402: connect wallet before paid tools — set X402_PRIVATE_KEY");
       }
-      // If the host supports cost estimates, include them in the confirmation
-      const cost = ctx.estimatedCost ?? "gateway quote";
-      if (cost) {
-        // Note: actual confirmation UI is delegated to the host.
-        // This hook verifies the signer is ready; budget enforcement is host responsibility.
-      }
+      // If the host supports cost estimates, they should be surfaced via the host UI.
+      // This hook only verifies signer readiness; budget enforcement is host responsibility.
     },
   };
 }
