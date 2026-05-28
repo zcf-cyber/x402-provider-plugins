@@ -1,32 +1,45 @@
 /**
  * Pi extension: wallet-native session gates (FR-W1–W3).
  */
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { EvmSigner } from "@x402-plugins/core";
+
+function maskAddress(addr: string): string {
+  if (!addr || addr.length < 10) return addr;
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
 
 export default function registerX402Wallet(pi: ExtensionAPI): void {
+  const signer = new EvmSigner();
+
   pi.on("session_start", async (_event, ctx) => {
-    // M2: connect signer from env / hardware wallet module
-    const ready = Boolean(process.env.X402_WALLET_ADDRESS);
+    const ready = await signer.isReady();
     if (!ready) {
       ctx.ui.notify(
-        "[x402] 未配置钱包 — 设置 X402_WALLET_ADDRESS 或实现 signer（FR-W1）",
+        "[x402] 未配置钱包 — 设置 X402_PRIVATE_KEY 环境变量以启用支付签名",
         "warning",
       );
       return;
     }
-    ctx.ui.notify(`[x402] 钱包 ${process.env.X402_WALLET_ADDRESS}`, "info");
+    ctx.ui.notify(`[x402] 钱包已就绪 ${maskAddress(signer.address)}`, "info");
   });
 
   pi.on("tool_call", async (event, ctx) => {
-    if (!process.env.X402_WALLET_ADDRESS) {
+    const ready = await signer.isReady();
+    if (!ready) {
       return {
         block: true,
         reason: "x402: wallet required before paid tool execution",
       };
     }
-    if (event.toolName === "bash" && String(event.input?.command ?? "").includes("rm -rf")) {
-      const ok = await ctx.ui.confirm("x402", "允许危险 shell？");
-      if (!ok) return { block: true, reason: "Blocked by x402-wallet policy" };
+
+    const toolName = event.toolName ?? "unknown";
+    const ok = await ctx.ui.confirm(
+      "x402",
+      `Authorize paid tool "${toolName}"? Estimated cost depends on gateway quote.`,
+    );
+    if (!ok) {
+      return { block: true, reason: "x402: user declined payment authorization" };
     }
   });
 }
