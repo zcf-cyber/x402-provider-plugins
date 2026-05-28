@@ -1,52 +1,93 @@
 /**
  * OpenClaw plugin entry (FR-CL1).
  * @see https://documentation.openclaw.ai/plugins/building-plugins
- *
- * M4: import definePluginEntry from openclaw/plugin-sdk/plugin-entry
  */
-import { createX402Fetch, type X402ClientConfig, type X402Signer } from "@x402-plugins/core";
+import { createX402Fetch, EvmSigner } from "@x402-plugins/core";
+import type { X402ClientConfig } from "@x402-plugins/core";
 
 export interface OpenClawX402Config extends X402ClientConfig {
   providerId?: string;
 }
 
-const defaultSigner: X402Signer = {
-  address: process.env.X402_WALLET_ADDRESS ?? "0x0000000000000000000000000000000000000000",
-  chainId: process.env.X402_CHAIN_ID ?? "eip155:8453",
-  async isReady() {
-    return Boolean(process.env.X402_WALLET_ADDRESS);
-  },
-  async signPayment() {
-    throw new Error("x402: implement OpenClaw wallet signer (M4)");
-  },
-};
-
-/**
- * Plugin registration factory — wire to OpenClaw `register(api)` in M4.
- */
 export function registerOpenClawX402(api: {
   registerProvider: (def: unknown) => void;
   log?: (msg: string) => void;
 }, config: OpenClawX402Config): void {
   const providerId = config.providerId ?? "x402-gateway";
-  const x402Fetch = createX402Fetch(config, defaultSigner);
+  const signer = new EvmSigner();
+  const x402Fetch = createX402Fetch(config, signer);
 
   api.registerProvider({
     id: providerId,
     name: "X402 Gateway Provider",
-    // M4: align with OpenClaw provider plugin schema
     config: {
       gatewayBaseUrl: config.gatewayBaseUrl,
       protocolVersion: config.protocolVersion ?? 2,
     },
-    // Host will call this for inference attempts
-    async runAttempt(_params: { prompt: string }) {
-      api.log?.(`[x402] stub runAttempt — use x402Fetch: ${typeof x402Fetch}`);
-      throw new Error("x402: implement runAttempt with @x402-plugins/core (M4)");
+    async runAttempt(params: { prompt: string }) {
+      const url = `${config.gatewayBaseUrl}/v1/chat/completions`;
+      const body = JSON.stringify({
+        model: "default",
+        messages: [{ role: "user", content: params.prompt }],
+        stream: false,
+      });
+
+      api.log?.(`[x402] runAttempt start — provider="${providerId}"`);
+
+      let response: Response;
+      try {
+        response = await x402Fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        api.log?.(`[x402] runAttempt error: ${message}`);
+        throw new Error(`x402: runAttempt failed — ${message}`);
+      }
+
+      if (!response.ok) {
+        const msg = `x402: gateway returned ${response.status}`;
+        api.log?.(`[x402] ${msg}`);
+        throw new Error(msg);
+      }
+
+      let data: unknown;
+      let text: string;
+      try {
+        data = await response.json();
+        text = extractText(data);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        api.log?.(`[x402] runAttempt parse error: ${message}`);
+        throw new Error(`x402: failed to parse gateway response — ${message}`);
+      }
+
+      api.log?.(`[x402] runAttempt completed — provider="${providerId}"`);
+      return { text, raw: data };
     },
   });
 
-  api.log?.(`[x402] registered provider "${providerId}" (skeleton)`);
+  api.log?.(`[x402] registered provider "${providerId}"`);
+}
+
+function extractText(data: unknown): string {
+  if (!data || typeof data !== "object") {
+    throw new Error("x402: gateway response is not a valid object");
+  }
+  const d = data as Record<string, unknown>;
+  const choices = d.choices as Array<Record<string, unknown>> | undefined;
+  if (!choices || !choices.length) {
+    throw new Error("x402: gateway response missing choices array");
+  }
+  const first = choices[0];
+  if (first.message && typeof first.message === "object") {
+    const msg = first.message as Record<string, unknown>;
+    if (typeof msg.content === "string") return msg.content;
+  }
+  if (typeof first.text === "string") return first.text;
+  throw new Error("x402: gateway response missing content in first choice");
 }
 
 export default function createPlugin() {
