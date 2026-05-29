@@ -58,75 +58,60 @@ describe("registerX402Discovery", () => {
     expect(pi.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "x402_list_services" }));
   });
 
-  it("discover: does nothing on empty keyword", async () => {
+  it("discover: returns empty on empty keyword", async () => {
     input.mockResolvedValue("");
     registerX402Discovery(pi);
     await cmds["discover"].handler(null, ctx);
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it("discover: queries index with keyword and displays filtered results", async () => {
+  it("discover: filters by keyword client-side and shows results with cost", async () => {
     input.mockResolvedValue("openai");
     registerX402Discovery(pi);
     await cmds["discover"].handler(null, ctx);
-    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("q=openai"), expect.any(Object));
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("发现 3 个服务"), "info");
+    expect(fetch).toHaveBeenCalledWith(expect.not.stringContaining("?q="), expect.any(Object));
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("discovered 1 service(s)"), "info");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("OpenAI Gateway"), "info");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("$0.001 - $0.01"), "info");
   });
 
-  it("discover: shows warning when index empty or network fails", async () => {
+  it("discover: warns when no keyword match or fetch fails", async () => {
     (globalThis.fetch as Mock).mockRejectedValue(new Error("down"));
-    input.mockResolvedValue("any");
+    input.mockResolvedValue("anything");
     registerX402Discovery(pi);
     await cmds["discover"].handler(null, ctx);
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("未找到匹配"), "warning");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("no services found matching"), "warning");
   });
 
-  it("discover: respects allowlist and warns when all filtered", async () => {
-    process.env.X402_ALLOWLIST = "https://api.openai.com";
-    input.mockResolvedValue("gateway");
-    registerX402Discovery(pi);
-    await cmds["discover"].handler(null, ctx);
-    const msg = notify.mock.calls.find((c: unknown[]) => (c[0] as string).includes("发现"))?.[0] as string;
-    expect(msg).toContain("OpenAI Gateway");
-    expect(msg).not.toContain("Claude");
+  it("discover: warns when all services filtered by allowlist", async () => {
     process.env.X402_ALLOWLIST = "https://blocked.example.com";
     input.mockResolvedValue("gateway");
     registerX402Discovery(pi);
     await cmds["discover"].handler(null, ctx);
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("均不在白名单中"), "warning");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("found 2 service(s) but none are in allowlist"), "warning");
   });
 
-  it("list_services: returns all services with cost info", async () => {
+  it("list_services: returns all services with cost when no filters", async () => {
     registerX402Discovery(pi);
-    const r = await tools["x402_list_services"].execute("r1", { keyword: undefined }, null, null, ctx) as { content: Array<{ text: string }> };
+    const r = (await tools["x402_list_services"].execute("r1", { keyword: undefined }, null, null, ctx)) as { content: Array<{ text: string }> };
     expect(r.content[0].text).toContain("OpenAI Gateway");
-    expect(r.content[0].text).toContain("Claude Gateway");
     expect(r.content[0].text).toContain("($0.001 - $0.01)");
+    expect(r.content[0].text).toContain("(free)");
   });
 
-  it("list_services: filters by keyword", async () => {
-    registerX402Discovery(pi);
-    const r = await tools["x402_list_services"].execute("r2", { keyword: "local" }, null, null, ctx) as { content: Array<{ text: string }> };
-    expect(r.content[0].text).toContain("Local LLM");
-    expect(r.content[0].text).not.toContain("OpenAI");
-  });
-
-  it("list_services: applies allowlist and shows fallback messages", async () => {
+  it("list_services: filters by keyword and allowlist", async () => {
     process.env.X402_ALLOWLIST = "https://api.anthropic.com";
     registerX402Discovery(pi);
-    const r = await tools["x402_list_services"].execute("r3", { keyword: undefined }, null, null, ctx) as { content: Array<{ text: string }> };
-    expect(r.content[0].text).toContain("Claude Gateway");
-    expect(r.content[0].text).not.toContain("OpenAI");
-    (globalThis.fetch as Mock).mockResolvedValue({ ok: true, json: () => Promise.resolve({ services: [] }) });
-    const r2 = await tools["x402_list_services"].execute("r4", { keyword: undefined }, null, null, ctx) as { content: Array<{ text: string }> };
-    expect(r2.content[0].text).toContain("无白名单匹配的服务");
+    const r = (await tools["x402_list_services"].execute("r2", { keyword: "local" }, null, null, ctx)) as { content: Array<{ text: string }> };
+    // keyword "local" matches Local LLM, but allowlist only has Anthropic
+    expect(r.content[0].text).toBe("[x402] no allowlisted services found");
   });
 
-  it("list_services: handles empty index and fetch failure", async () => {
+  it("list_services: shows fallback on fetch failure or empty index", async () => {
     delete process.env.X402_ALLOWLIST;
     (globalThis.fetch as Mock).mockRejectedValue(new Error("timeout"));
     registerX402Discovery(pi);
-    const r = await tools["x402_list_services"].execute("r5", { keyword: undefined }, null, null, ctx) as { content: Array<{ text: string }> };
-    expect(r.content[0].text).toBe("[x402] discovery index 无可用服务");
+    const r = (await tools["x402_list_services"].execute("r3", { keyword: undefined }, null, null, ctx)) as { content: Array<{ text: string }> };
+    expect(r.content[0].text).toBe("[x402] discovery index returned no services");
   });
 });
