@@ -143,6 +143,9 @@ describe("EvmSigner", () => {
     it("should produce deterministic signature for same payload", async () => {
       const signer = new EvmSigner();
 
+      // NOTE: This test requires a static payload without time-varying fields
+      // (expires_at, challenge_token). If those fields are added by the caller,
+      // signatures will differ and this assertion must be updated.
       const paymentRequired = {
         x402Version: 2,
         accepts: [
@@ -160,7 +163,7 @@ describe("EvmSigner", () => {
       const result1 = await signer.signPayment(paymentRequired);
       const result2 = await signer.signPayment(paymentRequired);
 
-      // Without timestamp, same payload must produce identical signatures
+      // Static payload without timestamps must produce identical signatures
       expect(result1["PAYMENT-SIGNATURE"]).toBe(result2["PAYMENT-SIGNATURE"]);
     });
 
