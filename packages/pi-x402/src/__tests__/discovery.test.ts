@@ -54,7 +54,10 @@ describe("registerX402Discovery", () => {
 
   it("registers discover command and list_services tool", () => {
     registerX402Discovery(pi);
-    expect(pi.registerCommand).toHaveBeenCalledWith("discover", expect.objectContaining({ description: expect.stringContaining("关键字搜索") }));
+    expect(pi.registerCommand).toHaveBeenCalledWith(
+      "discover",
+      expect.objectContaining({ description: expect.stringContaining("x402") }),
+    );
     expect(pi.registerTool).toHaveBeenCalledWith(expect.objectContaining({ name: "x402_list_services" }));
   });
 
@@ -69,7 +72,11 @@ describe("registerX402Discovery", () => {
     input.mockResolvedValue("openai");
     registerX402Discovery(pi);
     await cmds["discover"].handler(null, ctx);
-    expect(fetch).toHaveBeenCalledWith(expect.not.stringContaining("?q="), expect.any(Object));
+    // Verify the discovery index was queried without URL search params
+    expect(fetch).toHaveBeenCalledWith(
+      "https://discovery.x402.network/v1/services",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("discovered 1 service(s)"), "info");
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("OpenAI Gateway"), "info");
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("$0.001 - $0.01"), "info");

@@ -16,12 +16,13 @@ describe("createX402Fetch", () => {
     vi.clearAllMocks();
     vi.stubEnv("X402_PRIVATE_KEY", TEST_PRIVATE_KEY);
     vi.stubEnv("X402_CHAIN_ID", "eip155:8453");
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     signer = new EvmSigner();
   });
 
   afterEach(() => {
     process.env = { ...originalEnv };
-    global.fetch = originalFetch; // 正确恢复 global.fetch
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -56,23 +57,17 @@ describe("createX402Fetch", () => {
   });
 
   describe("Configuration handling", () => {
-    it("should use default protocolVersion (2) when not specified", async () => {
-      // 我们无法直接验证内部 x402Client 的注册，但可以验证配置被接受
+    it("should create a callable fetch wrapper with default config", async () => {
       const fetchWithPayment = createX402Fetch(
         { gatewayBaseUrl: "https://gateway.example.com" },
         signer,
       );
-
-      // 验证返回的是有效函数
       expect(fetchWithPayment).toBeInstanceOf(Function);
-      // 验证函数可以被调用（返回 Promise）
-      const result = fetchWithPayment("https://example.com");
-      expect(result).toBeInstanceOf(Promise);
-      // 清理
-      await result.catch(() => {});
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
 
-    it("should accept protocolVersion 1 configuration", async () => {
+    it("should create a callable fetch wrapper with V1 protocol", async () => {
       const fetchWithPayment = createX402Fetch(
         {
           gatewayBaseUrl: "https://gateway.example.com",
@@ -80,53 +75,23 @@ describe("createX402Fetch", () => {
         },
         signer,
       );
-
       expect(fetchWithPayment).toBeInstanceOf(Function);
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
 
-    it("should accept protocolVersion 2 configuration", async () => {
-      const fetchWithPayment = createX402Fetch(
-        {
-          gatewayBaseUrl: "https://gateway.example.com",
-          protocolVersion: 2,
-        },
-        signer,
-      );
-
-      expect(fetchWithPayment).toBeInstanceOf(Function);
-    });
-
-    it("should accept custom maxRetries", async () => {
+    it("should create a callable fetch wrapper with custom maxRetries and timeout", async () => {
       const fetchWithPayment = createX402Fetch(
         {
           gatewayBaseUrl: "https://gateway.example.com",
           maxRetries: 5,
-        },
-        signer,
-      );
-
-      expect(fetchWithPayment).toBeInstanceOf(Function);
-    });
-
-    it("should accept custom requestTimeoutMs", async () => {
-      const fetchWithPayment = createX402Fetch(
-        {
-          gatewayBaseUrl: "https://gateway.example.com",
           requestTimeoutMs: 60000,
         },
         signer,
       );
-
       expect(fetchWithPayment).toBeInstanceOf(Function);
-    });
-
-    it("should use default values when optional config omitted", async () => {
-      const fetchWithPayment = createX402Fetch(
-        { gatewayBaseUrl: "https://gateway.example.com" },
-        signer,
-      );
-
-      expect(fetchWithPayment).toBeInstanceOf(Function);
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
   });
 
@@ -203,12 +168,8 @@ describe("createX402Fetch", () => {
         { gatewayBaseUrl: "https://gateway.example.com" },
         signer,
       );
-
-      // 验证函数接受 string URL
-      expect(() => {
-        // 使用 Promise 但不 await，因为我们只想验证参数类型
-        fetchWithPayment("https://example.com").catch(() => {});
-      }).not.toThrow();
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
 
     it("should accept Request object as input", async () => {
@@ -216,15 +177,12 @@ describe("createX402Fetch", () => {
         { gatewayBaseUrl: "https://gateway.example.com" },
         signer,
       );
-
       const request = new Request("https://example.com", {
         method: "POST",
         body: JSON.stringify({ test: true }),
       });
-
-      expect(() => {
-        fetchWithPayment(request).catch(() => {});
-      }).not.toThrow();
+      const response = await fetchWithPayment(request);
+      expect(response.status).toBe(200);
     });
 
     it("should accept RequestInit options", async () => {
@@ -232,14 +190,12 @@ describe("createX402Fetch", () => {
         { gatewayBaseUrl: "https://gateway.example.com" },
         signer,
       );
-
-      expect(() => {
-        fetchWithPayment("https://example.com", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ test: true }),
-        }).catch(() => {});
-      }).not.toThrow();
+      const response = await fetchWithPayment("https://example.com", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ test: true }),
+      });
+      expect(response.status).toBe(200);
     });
   });
 
@@ -271,9 +227,7 @@ describe("createX402Fetch", () => {
   });
 
   describe("Timeout handling", () => {
-    it("should enforce requestTimeoutMs", async () => {
-      // 注意：由于 wrapFetchWithPayment 是外部库，
-      // 我们在这里测试的是 wrapper 层面的超时配置被接受
+    it("should create a fetch wrapper with custom requestTimeoutMs", async () => {
       const fetchWithPayment = createX402Fetch(
         {
           gatewayBaseUrl: "https://gateway.example.com",
@@ -281,42 +235,44 @@ describe("createX402Fetch", () => {
         },
         signer,
       );
-
       expect(fetchWithPayment).toBeInstanceOf(Function);
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
 
-    it("should use default timeout when not specified", async () => {
+    it("should create a fetch wrapper with default timeout", async () => {
       const fetchWithPayment = createX402Fetch(
         { gatewayBaseUrl: "https://gateway.example.com" },
         signer,
       );
-
-      // 默认应该是 30000ms
       expect(fetchWithPayment).toBeInstanceOf(Function);
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
   });
 
   describe("Retry configuration", () => {
-    it("should accept custom maxRetries", async () => {
+    it("should create a fetch wrapper with custom maxRetries", async () => {
       const fetchWithPayment = createX402Fetch(
         {
           gatewayBaseUrl: "https://gateway.example.com",
-          maxRetries: 0, // 无重试
+          maxRetries: 0,
         },
         signer,
       );
-
       expect(fetchWithPayment).toBeInstanceOf(Function);
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
 
-    it("should use default maxRetries when not specified", async () => {
+    it("should create a fetch wrapper with default maxRetries", async () => {
       const fetchWithPayment = createX402Fetch(
         { gatewayBaseUrl: "https://gateway.example.com" },
         signer,
       );
-
-      // 默认应该是 3
       expect(fetchWithPayment).toBeInstanceOf(Function);
+      const response = await fetchWithPayment("https://example.com");
+      expect(response.status).toBe(200);
     });
   });
 
