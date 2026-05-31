@@ -3,7 +3,7 @@
  * Symlink Pi extensions into ~/.pi/agent/extensions/
  * Usage: npm run install:pi-extensions
  */
-import { cpSync, existsSync, mkdirSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,3 +28,15 @@ for (const file of files) {
 }
 
 console.log("\nReload in Pi with /reload or restart pi.");
+
+// Also symlink @x402-plugins/core so Pi can resolve imports
+const corePkgPath = join(root, "packages", "x402-core");
+const piModuleDir = join(homedir(), ".pi", "agent", "node_modules", "@x402-plugins");
+mkdirSync(piModuleDir, { recursive: true });
+const coreSymlink = join(piModuleDir, "core");
+if (!existsSync(coreSymlink)) {
+  symlinkSync(corePkgPath, coreSymlink, "dir");
+  console.log(`linked @x402-plugins/core → ${corePkgPath}`);
+} else {
+  console.log(`@x402-plugins/core already linked`);
+}

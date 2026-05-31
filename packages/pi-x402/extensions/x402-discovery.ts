@@ -65,19 +65,19 @@ export default function registerX402Discovery(pi: ExtensionAPI): void {
   pi.registerCommand("discover", {
     description: "关键字搜索 x402 服务（渐进披露）",
     handler: async (_args, ctx) => {
-      const keyword = await ctx.ui.input("发现", "关键字");
+      const keyword = await ctx.ui?.input("发现", "关键字");
       if (!keyword) return;
 
       const services = await queryDiscoveryIndex();
       const matched = filterByKeyword(services, keyword);
       if (matched.length === 0) {
-        ctx.ui.notify(`[x402] no services found matching "${keyword}"`, "warning");
+        ctx.ui?.notify(`[x402] no services found matching "${keyword}"`, "warning");
         return;
       }
 
       const filtered = filterByAllowlist(matched, allowlist);
       if (filtered.length === 0) {
-        ctx.ui.notify(
+        ctx.ui?.notify(
           `[x402] found ${matched.length} service(s) but none are in allowlist`,
           "warning",
         );
@@ -87,7 +87,7 @@ export default function registerX402Discovery(pi: ExtensionAPI): void {
       const lines = filtered.map(
         (s) => `- ${s.name} (${s.endpoint}) cost: ${s.cost}`,
       );
-      ctx.ui.notify(
+      ctx.ui?.notify(
         `[x402] discovered ${filtered.length} service(s):\n${lines.join("\n")}`,
         "info",
       );

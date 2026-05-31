@@ -39,20 +39,20 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx?.ui.notify(`[x402] Provider error: ${message}`, "error");
+      ctx.ui?.notify(`[x402] Provider error: ${message}`, "error");
       throw new Error(`x402: provider fetch failed — ${message}`);
     }
 
     if (!response.ok) {
       const errorMsg = `x402: gateway returned ${response.status}`;
-      ctx?.ui.notify(`[x402] ${errorMsg}`, "error");
+      ctx.ui?.notify(`[x402] ${errorMsg}`, "error");
       throw new Error(errorMsg);
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
       const errorMsg = "x402: gateway returned empty body";
-      ctx?.ui.notify(`[x402] ${errorMsg}`, "error");
+      ctx.ui?.notify(`[x402] ${errorMsg}`, "error");
       throw new Error(errorMsg);
     }
 
@@ -82,7 +82,7 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx?.ui.notify(`[x402] Stream error: ${message}`, "error");
+      ctx.ui?.notify(`[x402] Stream error: ${message}`, "error");
       throw new Error(`x402: stream read failed — ${message}`);
     } finally {
       reader.releaseLock();
@@ -109,6 +109,6 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify(`[x402] Provider "${PROVIDER_ID}" registered`, "info");
+    ctx.ui?.notify(`[x402] Provider "${PROVIDER_ID}" registered`, "info");
   });
 }
