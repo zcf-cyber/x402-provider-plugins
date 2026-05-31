@@ -109,6 +109,6 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify(`[x402] Provider "${PROVIDER_ID}" registered`, "info");
+    ctx?.ui.notify(`[x402] Provider "${PROVIDER_ID}" registered`, "info");
   });
 }
