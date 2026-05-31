@@ -15,13 +15,13 @@ export default function registerX402Wallet(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
     const ready = await signer.isReady();
     if (!ready) {
-      ctx?.ui.notify(
+      ctx.ui?.notify(
         "[x402] 未配置钱包 — 设置 X402_PRIVATE_KEY 环境变量以启用支付签名",
         "warning",
       );
       return;
     }
-    ctx?.ui.notify(`[x402] 钱包已就绪 ${maskAddress(signer.address)}`, "info");
+    ctx.ui?.notify(`[x402] 钱包已就绪 ${maskAddress(signer.address)}`, "info");
   });
 
   pi.on("tool_call", async (event, ctx) => {
