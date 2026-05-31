@@ -306,6 +306,95 @@ describe("createX402Fetch", () => {
     });
   });
 
+  describe("Audit hook accumulation", () => {
+    it("should not accumulate audit hooks across multiple fetch calls", async () => {
+      // Create a 402-then-200 server to verify hook behavior across multiple requests
+      const http = await import("http");
+      let requestCount = 0;
+      const server = http.createServer((_req, res) => {
+        requestCount++;
+        if (requestCount % 2 === 1) {
+          // First request: return 402
+          const payload = Buffer.from(
+            JSON.stringify({
+              x402Version: 2,
+              resource: { url: "/v1/chat", serviceName: "test" },
+              accepts: [
+                {
+                  scheme: "exact_evm",
+                  network: "eip155:8453",
+                  payTo: "0x0000000000000000000000000000000000000000",
+                  amount: "1",
+                  asset: "0x0000000000000000000000000000000000000000",
+                  maxTimeoutSeconds: 300,
+                },
+              ],
+            }),
+          ).toString("base64");
+          res.writeHead(402, {
+            "Content-Type": "application/json",
+            "PAYMENT-REQUIRED": payload,
+          });
+          res.end(JSON.stringify({ error: "Payment Required" }));
+        } else {
+          // Second request: return 200 (simulates pay+retry success)
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ result: "ok" }));
+        }
+      });
+
+      const port = await new Promise<number>((resolve) =>
+        server.listen(0, () => {
+          const addr = server.address();
+          resolve(typeof addr === "string" ? parseInt(addr.split(":").pop()!) : addr!.port);
+        }),
+      );
+
+      // Restore real fetch so the local HTTP server is actually contacted.
+      // The outer beforeEach mocks globalThis.fetch for other tests.
+      globalThis.fetch = originalFetch;
+
+      const auditEntries: X402AuditEntry[] = [];
+      const fetchWithPayment = createX402Fetch(
+        { gatewayBaseUrl: `http://127.0.0.1:${port}`, maxRetries: 1 },
+        signer,
+        (e) => auditEntries.push(e),
+      );
+
+      // Make 3 sequential fetch calls
+      for (let i = 0; i < 3; i++) {
+        await fetchWithPayment(`http://127.0.0.1:${port}/v1/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt: `test-${i}` }),
+        });
+      }
+
+      // Audit entries should grow linearly, not exponentially.
+      // Each call should produce: 402_received (1) + signed (1) + retry (maybe)
+      // Without the fix, entries per call would grow: call1=3, call2=5, call3=7 (extras)
+      // With the fix, each call produces the same number of entries.
+
+      // Group entries by requestId
+      const byRequest = new Map<string, X402AuditEntry[]>();
+      for (const entry of auditEntries) {
+        const list = byRequest.get(entry.requestId) ?? [];
+        list.push(entry);
+        byRequest.set(entry.requestId, list);
+      }
+
+      // Should have 3 distinct requestIds
+      expect(byRequest.size).toBe(3);
+
+      // Each request should have a consistent number of entries (not growing)
+      const counts = Array.from(byRequest.values()).map((e) => e.length);
+      expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(2);
+
+      server.closeAllConnections?.();
+      server.close();
+    });
+  });
+
   describe("Return type", () => {
     it("should return a function matching fetch signature", async () => {
       const fetchFn = createX402Fetch(
