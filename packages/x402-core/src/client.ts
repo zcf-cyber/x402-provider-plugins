@@ -144,38 +144,45 @@ export function createX402Fetch(
   // Wrap the base fetch with payment handling
   const wrappedFetch = wrapFetchWithPayment(baseFetch, httpClient);
 
+  // Per-request context for audit correlation.
+  // Updated before each call so hooks reference the current requestId.
+  let currentRequestId = "";
+
+  // Register audit hooks once at creation time (not per-request) to prevent accumulation.
+  // Uses currentRequestId for per-request correlation.
+  if (audit) {
+    x402ClientInstance.onAfterPaymentCreation(async (context) => {
+      audit({
+        at: new Date().toISOString(),
+        requestId: currentRequestId,
+        phase: "signed",
+        detail: `payment created for ${context.paymentRequired.resource}`,
+      });
+    });
+
+    x402ClientInstance.onPaymentResponse(async (context) => {
+      const phase = context.settleResponse
+        ? context.settleResponse.success
+          ? "settled"
+          : "error"
+        : "retry";
+      audit({
+        at: new Date().toISOString(),
+        requestId: currentRequestId,
+        phase,
+        detail: phase === "error" ? "payment failed" : `payment ${phase}`,
+      });
+    });
+  }
+
   // Return a fetch function with timeout and retry logic
   return async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
   ): Promise<Awaited<ReturnType<typeof fetch>>> => {
     const requestId = generateRequestId();
-
-    // Register audit hook if provided (moved inside to share requestId)
-    if (audit) {
-      x402ClientInstance.onAfterPaymentCreation(async (context) => {
-        audit({
-          at: new Date().toISOString(),
-          requestId, // Use the same requestId for correlation
-          phase: "signed",
-          detail: `payment created for ${context.paymentRequired.resource}`,
-        });
-      });
-
-      x402ClientInstance.onPaymentResponse(async (context) => {
-        const phase = context.settleResponse
-          ? context.settleResponse.success
-            ? "settled"
-            : "error"
-          : "retry";
-        audit({
-          at: new Date().toISOString(),
-          requestId, // Use the same requestId for correlation
-          phase,
-          detail: phase === "error" ? "payment failed" : `payment ${phase}`,
-        });
-      });
-    }
+    // Update the shared requestId so hooks reference the current request
+    currentRequestId = requestId;
 
     // Check if signer is ready before making request
     if (!(await signer.isReady())) {
