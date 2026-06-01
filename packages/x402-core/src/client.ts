@@ -1,13 +1,11 @@
-import { wrapFetchWithPayment } from "@x402/fetch";
-import { x402Client, x402HTTPClient } from "@x402/core/client";
 import type {
-  Network,
   PaymentPayloadContext,
   PaymentPayloadResult,
   PaymentRequirements,
   SchemeNetworkClient,
 } from "@x402/core/types";
 import type { X402AuditSink, X402ClientConfig, X402Signer } from "./types.js";
+import { V2ProtocolHandler } from "./protocol/V2ProtocolHandler.js";
 
 /**
  * EVM scheme client implementing SchemeNetworkClient interface.
@@ -128,51 +126,24 @@ export function createX402Fetch(
   // Determine the network identifier based on protocol version
   const networkId = getNetworkId(signer.chainId, protocolVersion);
 
-  // Create x402Client with scheme registration
-  const x402ClientInstance = new x402Client();
+  // Delegate protocol plumbing to V2ProtocolHandler
+  const protocolHandler = new V2ProtocolHandler(
+    networkId,
+    protocolVersion,
+    schemeClient,
+  );
 
-  if (protocolVersion === 1) {
-    x402ClientInstance.registerV1(networkId, schemeClient);
-  } else {
-    // Cast to Network type which expects `${string}:${string}` format
-    x402ClientInstance.register(networkId as Network, schemeClient);
-  }
-
-  // Create HTTP client wrapper
-  const httpClient = new x402HTTPClient(x402ClientInstance);
-
-  // Wrap the base fetch with payment handling
-  const wrappedFetch = wrapFetchWithPayment(baseFetch, httpClient);
+  // Wrap the base fetch with 402 → pay → retry handling
+  const wrappedFetch = protocolHandler.wrapFetch(baseFetch);
 
   // Per-request context for audit correlation.
   // Updated before each call so hooks reference the current requestId.
   let currentRequestId = "";
 
   // Register audit hooks once at creation time (not per-request) to prevent accumulation.
-  // Uses currentRequestId for per-request correlation.
+  // Uses currentRequestId closure for per-request correlation.
   if (audit) {
-    x402ClientInstance.onAfterPaymentCreation(async (context) => {
-      audit({
-        at: new Date().toISOString(),
-        requestId: currentRequestId,
-        phase: "signed",
-        detail: `payment created for ${context.paymentRequired.resource}`,
-      });
-    });
-
-    x402ClientInstance.onPaymentResponse(async (context) => {
-      const phase = context.settleResponse
-        ? context.settleResponse.success
-          ? "settled"
-          : "error"
-        : "retry";
-      audit({
-        at: new Date().toISOString(),
-        requestId: currentRequestId,
-        phase,
-        detail: phase === "error" ? "payment failed" : `payment ${phase}`,
-      });
-    });
+    protocolHandler.registerAuditHooks(audit, () => currentRequestId);
   }
 
   // Return a fetch function with timeout and retry logic
