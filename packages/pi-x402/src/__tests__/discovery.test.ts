@@ -69,6 +69,7 @@ describe("registerX402Discovery", () => {
   });
 
   it("discover: filters by keyword client-side and shows results with cost", async () => {
+    process.env.X402_ALLOWLIST = "https://api.openai.com,https://api.anthropic.com,http://localhost:11434";
     input.mockResolvedValue("openai");
     registerX402Discovery(pi);
     await cmds["discover"].handler(null, ctx);
@@ -82,12 +83,19 @@ describe("registerX402Discovery", () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("$0.001 - $0.01"), "info");
   });
 
-  it("discover: warns when no keyword match or fetch fails", async () => {
+  it("discover: warns when no keyword match", async () => {
+    input.mockResolvedValue("nonexistent");
+    registerX402Discovery(pi);
+    await cmds["discover"].handler(null, ctx);
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("no services found matching"), "warning");
+  });
+
+  it("discover: shows error when discovery index is unreachable", async () => {
     (globalThis.fetch as Mock).mockRejectedValue(new Error("down"));
     input.mockResolvedValue("anything");
     registerX402Discovery(pi);
     await cmds["discover"].handler(null, ctx);
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("no services found matching"), "warning");
+    expect(notify).toHaveBeenCalledWith("[x402] discovery index unreachable", "error");
   });
 
   it("discover: warns when all services filtered by allowlist", async () => {
@@ -98,12 +106,21 @@ describe("registerX402Discovery", () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("found 2 service(s) but none are in allowlist"), "warning");
   });
 
-  it("list_services: returns all services with cost when no filters", async () => {
+  it("list_services: returns no services when allowlist is empty (default-deny per FR-D3)", async () => {
     registerX402Discovery(pi);
     const r = (await tools["x402_list_services"].execute("r1", { keyword: undefined }, null, null, ctx)) as { content: Array<{ text: string }> };
+    expect(r.content[0].text).toBe("[x402] discovery index returned no services");
+  });
+
+  it("list_services: returns allowlisted services when allowlist is set", async () => {
+    process.env.X402_ALLOWLIST = "https://api.openai.com,http://localhost:11434";
+    registerX402Discovery(pi);
+    const r = (await tools["x402_list_services"].execute("r1b", { keyword: undefined }, null, null, ctx)) as { content: Array<{ text: string }> };
     expect(r.content[0].text).toContain("OpenAI Gateway");
     expect(r.content[0].text).toContain("($0.001 - $0.01)");
     expect(r.content[0].text).toContain("(free)");
+    // Should NOT include Claude Gateway (not in allowlist)
+    expect(r.content[0].text).not.toContain("Claude Gateway");
   });
 
   it("list_services: filters by keyword and allowlist", async () => {
@@ -114,11 +131,11 @@ describe("registerX402Discovery", () => {
     expect(r.content[0].text).toBe("[x402] no allowlisted services found");
   });
 
-  it("list_services: shows fallback on fetch failure or empty index", async () => {
+  it("list_services: shows unreachable on network error", async () => {
     delete process.env.X402_ALLOWLIST;
     (globalThis.fetch as Mock).mockRejectedValue(new Error("timeout"));
     registerX402Discovery(pi);
     const r = (await tools["x402_list_services"].execute("r3", { keyword: undefined }, null, null, ctx)) as { content: Array<{ text: string }> };
-    expect(r.content[0].text).toBe("[x402] discovery index returned no services");
+    expect(r.content[0].text).toBe("[x402] discovery index unreachable");
   });
 });
