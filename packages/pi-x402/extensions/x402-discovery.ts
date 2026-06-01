@@ -29,7 +29,7 @@ function filterByAllowlist(
   services: Array<{ name: string; endpoint: string; cost: string }>,
   allowlist: Set<string>,
 ) {
-  if (allowlist.size === 0) return services;
+  if (allowlist.size === 0) return [];
   return services.filter((s) => allowlist.has(s.endpoint));
 }
 
@@ -46,7 +46,7 @@ async function queryDiscoveryIndex(): Promise<Array<{ name: string; endpoint: st
       cost: s.cost_range ?? "unknown",
     }));
   } catch {
-    return [];
+    throw new Error("x402: discovery index unreachable");
   } finally {
     clearTimeout(timer);
   }
@@ -68,7 +68,13 @@ export default function registerX402Discovery(pi: ExtensionAPI): void {
       const keyword = await ctx.ui?.input("发现", "关键字");
       if (!keyword) return;
 
-      const services = await queryDiscoveryIndex();
+      let services;
+      try {
+        services = await queryDiscoveryIndex();
+      } catch {
+        ctx.ui?.notify("[x402] discovery index unreachable", "error");
+        return;
+      }
       const matched = filterByKeyword(services, keyword);
       if (matched.length === 0) {
         ctx.ui?.notify(`[x402] no services found matching "${keyword}"`, "warning");
@@ -103,7 +109,13 @@ export default function registerX402Discovery(pi: ExtensionAPI): void {
       keyword: Type.Optional(Type.String({ description: "Filter by keyword" })),
     }),
     async execute(_id, params, _signal, _onUpdate, _ctx) {
-      const services = await queryDiscoveryIndex();
+      let services;
+      try {
+        services = await queryDiscoveryIndex();
+      } catch {
+        return { content: [{ type: "text", text: "[x402] discovery index unreachable" }], details: {} };
+      }
+
       const kw = filterByKeyword(services, params.keyword ?? "");
       const al = filterByAllowlist(kw, allowlist);
 
