@@ -94,6 +94,45 @@ function isValidSignature(headerValue) {
   }
 }
 
+/**
+ * Process an incoming request through the x402 payment protocol.
+ *
+ * Encapsulates protocol logic (payment check, signature validation,
+ * response construction) separately from HTTP transport — mirroring
+ * the ProtocolHandler abstraction pattern from x402-core.
+ *
+ * @param {http.IncomingMessage} req
+ * @returns {{ status: number, headers: Record<string, string>, body: string, note: string }}
+ */
+function processRequest(req) {
+  const sig = req.headers["payment-signature"] || req.headers["x-payment"];
+
+  if (!sig) {
+    return {
+      status: 402,
+      headers: { "PAYMENT-REQUIRED": createPaymentRequired() },
+      body: JSON.stringify({ error: "Payment required" }),
+      note: "PAYMENT-REQUIRED",
+    };
+  }
+
+  if (!isValidSignature(sig)) {
+    return {
+      status: 402,
+      headers: { "PAYMENT-REQUIRED": createPaymentRequired() },
+      body: JSON.stringify({ error: "Invalid payment signature" }),
+      note: "INVALID-SIGNATURE",
+    };
+  }
+
+  return {
+    status: 200,
+    headers: {},
+    body: createChatCompletion(),
+    note: "SETTLED",
+  };
+}
+
 const server = http.createServer((req, res) => {
   const host = req.headers.host;
   if (!host) {
@@ -111,32 +150,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const sig =
-    req.headers["payment-signature"] || req.headers["x-payment"];
+  const result = processRequest(req);
 
-  if (!sig) {
-    log(req.method, url.pathname, 402, "PAYMENT-REQUIRED");
-    res.writeHead(402, {
-      "Content-Type": "application/json",
-      "PAYMENT-REQUIRED": createPaymentRequired(),
-    });
-    res.end(JSON.stringify({ error: "Payment required" }));
-    return;
-  }
+  log(req.method, url.pathname, result.status, result.note);
 
-  if (!isValidSignature(sig)) {
-    log(req.method, url.pathname, 402, "INVALID-SIGNATURE");
-    res.writeHead(402, {
-      "Content-Type": "application/json",
-      "PAYMENT-REQUIRED": createPaymentRequired(),
-    });
-    res.end(JSON.stringify({ error: "Invalid payment signature" }));
-    return;
-  }
-
-  log(req.method, url.pathname, 200, "SETTLED");
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(createChatCompletion());
+  res.writeHead(result.status, {
+    "Content-Type": "application/json",
+    ...result.headers,
+  });
+  res.end(result.body);
 });
 
 server.listen(port, () => {
