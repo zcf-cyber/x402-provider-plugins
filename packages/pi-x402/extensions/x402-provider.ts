@@ -1,14 +1,17 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createX402Fetch, EvmSigner } from "@x402-plugins/core";
-
-const PROVIDER_ID = process.env.X402_PROVIDER_ID ?? "x402-gateway";
-const GATEWAY_URL = process.env.X402_GATEWAY_URL ?? "http://127.0.0.1:8080";
-const CHAIN_ID = process.env.X402_CHAIN_ID ?? "eip155:8453";
+import { resolveConfig, registerConfigUI } from "./config.js";
 
 export default function registerX402Provider(pi: ExtensionAPI): void {
-  const signer = new EvmSigner(CHAIN_ID);
+  registerConfigUI(pi);
+
+  const config = resolveConfig(
+    pi as unknown as { getFlag?: (name: string) => string | undefined },
+  );
+
+  const signer = new EvmSigner(config.chainId, config.privateKey || null);
   const fetchWithPayment = createX402Fetch(
-    { gatewayBaseUrl: GATEWAY_URL, maxRetries: 2 },
+    { gatewayBaseUrl: config.gatewayUrl, maxRetries: 2 },
     signer,
   );
 
@@ -21,7 +24,7 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
     },
     ctx?: ExtensionContext,
   ): AsyncGenerator<{ content: string; role?: string }> {
-    const url = `${GATEWAY_URL}/v1/chat/completions`;
+    const url = `${config.gatewayUrl}/v1/chat/completions`;
     const body = JSON.stringify({
       model: params.model,
       messages: params.messages,
@@ -89,9 +92,9 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
     }
   }
 
-  pi.registerProvider(PROVIDER_ID, {
+  pi.registerProvider(config.providerId, {
     name: "X402 Gateway",
-    baseUrl: GATEWAY_URL,
+    baseUrl: config.gatewayUrl,
     apiKey: "X402_WALLET",
     api: "openai-completions",
     models: [
@@ -109,6 +112,19 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui?.notify(`[x402] Provider "${PROVIDER_ID}" registered`, "info");
+    const ready = await signer.isReady();
+    if (ready) {
+      const addr = signer.address;
+      const masked = addr.length >= 10 ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : addr;
+      ctx.ui?.notify(
+        `[x402] Provider "${config.providerId}" registered, wallet ${masked}`,
+        "info",
+      );
+    } else {
+      ctx.ui?.notify(
+        `[x402] Provider "${config.providerId}" registered — wallet not configured. Run /x402-config edit to set up.`,
+        "warning",
+      );
+    }
   });
 }
