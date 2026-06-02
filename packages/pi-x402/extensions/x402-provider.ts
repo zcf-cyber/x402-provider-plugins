@@ -24,7 +24,8 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
     },
     ctx?: ExtensionContext,
   ): AsyncGenerator<{ content: string; role?: string }> {
-    const url = `${config.gatewayUrl}/v1/chat/completions`;
+    const baseUrl = config.providerUrl || config.gatewayUrl;
+    const url = `${baseUrl}/v1/chat/completions`;
     const body = JSON.stringify({
       model: params.model,
       messages: params.messages,
@@ -94,13 +95,13 @@ export default function registerX402Provider(pi: ExtensionAPI): void {
 
   pi.registerProvider(config.providerId, {
     name: "X402 Gateway",
-    baseUrl: config.gatewayUrl,
+    baseUrl: config.providerUrl || config.gatewayUrl,
     apiKey: "X402_WALLET",
     api: "openai-completions",
     models: [
       {
-        id: "default",
-        name: "X402 Default",
+        id: config.modelName,
+        name: `x402: ${config.modelName}`,
         reasoning: false,
         input: ["text"],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },

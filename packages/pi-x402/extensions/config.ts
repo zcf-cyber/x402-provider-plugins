@@ -1,32 +1,47 @@
+/**
+ * x402 Configuration Manager — persists to ~/.pi/x402-config.json.
+ * Priority: CLI flags > config file > environment variables > defaults.
+ * Supports CLI flags, TUI wizard (/x402-config edit), and CLI status (/x402-config status).
+ */
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, dirname } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const CONFIG_PATH = `${process.env.HOME}/.pi/x402-config.json`;
+// ── Types & Constants ────────────────────────────────────────
 
 export interface X402Config {
   gatewayUrl: string;
   chainId: string;
   privateKey: string;
   providerId: string;
+  providerUrl: string;
+  modelName: string;
   discoveryUrl: string;
   allowlist: string;
 }
+
+const CONFIG_PATH = join(homedir(), ".pi", "x402-config.json");
 
 const DEFAULTS: X402Config = {
   gatewayUrl: "http://127.0.0.1:8080",
   chainId: "eip155:8453",
   privateKey: "",
   providerId: "x402-gateway",
+  providerUrl: "",
+  modelName: "default",
   discoveryUrl: "",
   allowlist: "*",
 };
 
+// ── File I/O ─────────────────────────────────────────────────
+
 function readRawConfig(): Partial<X402Config> | null {
   try {
-    const { existsSync, readFileSync } = require("node:fs");
     if (existsSync(CONFIG_PATH)) {
-      return JSON.parse(readFileSync(CONFIG_PATH, "utf-8"));
+      return JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as Partial<X402Config>;
     }
-  } catch {}
+  } catch { /* corrupted — treat as missing */ }
   return null;
 }
 
@@ -36,24 +51,28 @@ export function loadConfig(): X402Config {
 }
 
 export function saveConfig(partial: Partial<X402Config>): void {
-  const { existsSync, writeFileSync, mkdirSync } = require("node:fs");
-  const { dirname } = require("node:path");
   const merged = { ...loadConfig(), ...partial };
   const dir = dirname(CONFIG_PATH);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2), "utf-8");
 }
 
+// ── Resolution ───────────────────────────────────────────────
+
 const FLAG_MAP: Record<keyof X402Config, { flag: string; env: string } | null> = {
   gatewayUrl: { flag: "x402-gateway-url", env: "X402_GATEWAY_URL" },
   chainId: { flag: "x402-chain-id", env: "X402_CHAIN_ID" },
   privateKey: { flag: "x402-private-key", env: "X402_PRIVATE_KEY" },
   providerId: { flag: "x402-provider-id", env: "X402_PROVIDER_ID" },
+  providerUrl: { flag: "x402-provider-url", env: "X402_PROVIDER_URL" },
+  modelName: { flag: "x402-model-name", env: "X402_MODEL_NAME" },
   discoveryUrl: { flag: "x402-discovery-url", env: "X402_DISCOVERY_URL" },
-  allowlist: null,
+  allowlist: null, // allowlist uses dedicated resolution (no CLI flag)
 };
 
-export function resolveConfig(pi?: { getFlag?: (name: string) => string | undefined }): X402Config {
+export function resolveConfig(pi?: {
+  getFlag?: (name: string) => string | undefined;
+}): X402Config {
   const fileValues = readRawConfig();
   const getCli = (flag: string) => pi?.getFlag?.(flag);
 
@@ -65,74 +84,199 @@ export function resolveConfig(pi?: { getFlag?: (name: string) => string | undefi
     return cliVal ?? fileVal ?? envVal ?? DEFAULTS[key];
   };
 
-  const allowlist = fileValues?.allowlist ?? process.env.X402_ALLOWLIST ?? DEFAULTS.allowlist;
+  // allowlist uses a different resolution: file > env > default (no CLI)
+  const allowlist = fileValues?.allowlist ??
+    process.env.X402_ALLOWLIST ??
+    DEFAULTS.allowlist;
 
   return {
     gatewayUrl: resolve("gatewayUrl"),
     chainId: resolve("chainId"),
     privateKey: resolve("privateKey"),
     providerId: resolve("providerId"),
+    providerUrl: resolve("providerUrl"),
+    modelName: resolve("modelName"),
     discoveryUrl: resolve("discoveryUrl"),
     allowlist,
   };
 }
 
+// ── TUI / CLI Registration ───────────────────────────────────
+
 export function registerConfigUI(pi: ExtensionAPI): void {
-  const registerFlag = (pi as Record<string, unknown>).registerFlag as ((name: string, opts: Record<string, unknown>) => void) | undefined;
+  // Register CLI flags (gracefully handle absence of registerFlag)
+  const registerFlag = (pi as Record<string, unknown>)
+    .registerFlag as
+    | ((name: string, opts: Record<string, unknown>) => void)
+    | undefined;
   if (typeof registerFlag === "function") {
     const flags: [string, string][] = [
       ["x402-gateway-url", "x402 Gateway URL"],
       ["x402-chain-id", "Chain ID (e.g. eip155:8453)"],
       ["x402-private-key", "EVM private key for signing"],
       ["x402-provider-id", "Provider identifier"],
+      ["x402-provider-url", "Provider API base URL (optional)"],
+      ["x402-model-name", "Model name/ID to use (e.g. gpt-4)"],
       ["x402-discovery-url", "Discovery service URL"],
     ];
     for (const [name, desc] of flags) registerFlag(name, { description: desc });
   }
 
+  // Register /x402-config command
   pi.registerCommand("x402-config", {
     description: "Configure x402 wallet and provider",
     handler: async (args: string[], ctx) => {
       const subCmd = args[0] ?? "";
       if (subCmd === "edit") await editWizard(ctx);
       else if (subCmd === "status") await showStatus(ctx);
-      else ctx.ui?.notify?.("[x402] Usage: /x402-config edit | /x402-config status", "info");
+      else if (subCmd === "set") await handleSet(ctx, args.slice(1));
+      else ctx.ui?.notify?.(
+        "[x402] Usage: /x402-config edit | /x402-config status | /x402-config set <key> <value>",
+        "info",
+      );
     },
   });
 }
 
-async function editWizard(ctx: { ui?: { input?: (t: string, p: string) => Promise<string | undefined>; notify?: (m: string, l: string) => void } }): Promise<void> {
+// ── set Command ───────────────────────────────────────────────
+
+const VALID_SET_KEYS = new Set<string>([
+  "gatewayUrl", "chainId", "privateKey", "providerId",
+  "providerUrl", "modelName", "discoveryUrl", "allowlist",
+]);
+
+async function handleSet(
+  ctx: { ui?: { notify?: (message: string, level: string) => void } },
+  args: string[],
+): Promise<void> {
+  const key = args[0] ?? "";
+  const value = args.slice(1).join(" ");
+
+  if (!key || !value) {
+    ctx.ui?.notify?.(
+      "[x402] Usage: /x402-config set <key> <value>\nKeys: gatewayUrl, chainId, privateKey, providerId, providerUrl, modelName, discoveryUrl, allowlist",
+      "info",
+    );
+    return;
+  }
+
+  if (!VALID_SET_KEYS.has(key)) {
+    ctx.ui?.notify?.(
+      `[x402] Unknown key "${key}".\nValid: ${[...VALID_SET_KEYS].join(", ")}`,
+      "error",
+    );
+    return;
+  }
+
+  saveConfig({ [key]: value });
+  ctx.ui?.notify?.(`[x402] ${key} → ${value}`, "info");
+}
+
+// ── TUI Wizard ───────────────────────────────────────────────
+
+async function editWizard(ctx: {
+  ui?: {
+    input?: (title: string, placeholder: string) => Promise<string | undefined>;
+    notify?: (message: string, level: string) => void;
+  };
+}): Promise<void> {
   const config = loadConfig();
-
-  const gatewayUrl = ctx.ui?.input ? await ctx.ui.input("x402 Gateway URL", config.gatewayUrl) : undefined;
-  const chainPrompt = ["eip155:8453  (Base)", "eip155:84532 (Sepolia)", "eip155:1     (Ethereum)", "", `Current: ${config.chainId}`].join("\n");
-  const chainId = ctx.ui?.input ? await ctx.ui.input("Chain ID", chainPrompt) : undefined;
-  const pkPlaceholder = config.privateKey ? `${config.privateKey.slice(0, 6)}...${config.privateKey.slice(-4)} (set)` : "0x... (not set)";
-  const privateKey = ctx.ui?.input ? await ctx.ui.input("EVM Private Key", pkPlaceholder) : undefined;
-
   const updates: Partial<X402Config> = {};
+
+  // 1. Gateway URL
+  const gatewayUrl = ctx.ui?.input
+    ? await ctx.ui.input("1/8 — x402 Gateway URL", config.gatewayUrl)
+    : undefined;
   if (gatewayUrl !== undefined && gatewayUrl !== "") updates.gatewayUrl = gatewayUrl;
+
+  // 2. Provider ID
+  const providerId = ctx.ui?.input
+    ? await ctx.ui.input("2/8 — Provider ID", config.providerId)
+    : undefined;
+  if (providerId !== undefined && providerId !== "") updates.providerId = providerId;
+
+  // 3. Provider URL (optional — falls back to gateway URL if empty)
+  const providerUrlPlaceholder = config.providerUrl || "(same as gateway URL)";
+  const providerUrl = ctx.ui?.input
+    ? await ctx.ui.input("3/8 — Provider API URL (optional)", providerUrlPlaceholder)
+    : undefined;
+  if (providerUrl !== undefined) updates.providerUrl = providerUrl;
+
+  // 4. Model name/ID
+  const modelName = ctx.ui?.input
+    ? await ctx.ui.input("4/8 — Model name/ID", config.modelName)
+    : undefined;
+  if (modelName !== undefined && modelName !== "") updates.modelName = modelName;
+
+  // 5. Chain ID (with suggestions)
+  const chainPrompt = [
+    "eip155:8453  (Base)",
+    "eip155:84532 (Sepolia)",
+    "eip155:1     (Ethereum)",
+    "",
+    `Current: ${config.chainId}`,
+  ].join("\n");
+  const chainId = ctx.ui?.input
+    ? await ctx.ui.input("5/8 — Chain ID", chainPrompt)
+    : undefined;
   if (chainId !== undefined && chainId !== "") updates.chainId = chainId;
+
+  // 6. Private Key
+  const pkPlaceholder = config.privateKey
+    ? `${config.privateKey.slice(0, 6)}...${config.privateKey.slice(-4)} (set)`
+    : "0x... (not set)";
+  const privateKey = ctx.ui?.input
+    ? await ctx.ui.input("6/8 — EVM Private Key", pkPlaceholder)
+    : undefined;
   if (privateKey !== undefined && privateKey !== "") updates.privateKey = privateKey;
+
+  // 7. Discovery URL (optional)
+  const discoPlaceholder = config.discoveryUrl || "(not set)";
+  const discoveryUrl = ctx.ui?.input
+    ? await ctx.ui.input("7/8 — Discovery URL (optional)", discoPlaceholder)
+    : undefined;
+  if (discoveryUrl !== undefined) updates.discoveryUrl = discoveryUrl;
+
+  // 8. Allowlist (optional, comma-separated or * for all)
+  const allowlistPlaceholder = config.allowlist || "*";
+  const allowlist = ctx.ui?.input
+    ? await ctx.ui.input("8/8 — Allowlist (* or comma-separated URLs)", allowlistPlaceholder)
+    : undefined;
+  if (allowlist !== undefined) updates.allowlist = allowlist;
 
   if (Object.keys(updates).length > 0) {
     saveConfig(updates);
-    ctx.ui?.notify?.("[x402] Configuration saved to ~/.pi/x402-config.json\nRun /reload to apply changes.", "info");
+    ctx.ui?.notify?.(
+      "[x402] Configuration saved to ~/.pi/x402-config.json\nRun /reload to apply changes.",
+      "info",
+    );
   } else {
     ctx.ui?.notify?.("[x402] No changes made.", "info");
   }
 }
 
-async function showStatus(ctx: { ui?: { notify?: (m: string, l: string) => void } }): Promise<void> {
+// ── Status Display ───────────────────────────────────────────
+
+async function showStatus(ctx: {
+  ui?: { notify?: (message: string, level: string) => void };
+}): Promise<void> {
   const config = resolveConfig();
-  const pkDisplay = config.privateKey ? `${config.privateKey.slice(0, 6)}...${config.privateKey.slice(-4)}` : "(not set)";
+  const pkDisplay = config.privateKey
+    ? `${config.privateKey.slice(0, 6)}...${config.privateKey.slice(-4)}`
+    : "(not set)";
+  const providerUrlDisplay = config.providerUrl || "(same as gateway URL)";
+  const discoveryUrlDisplay = config.discoveryUrl || "(not set)";
   const lines = [
     "x402 Configuration Status",
-    `Gateway URL  : ${config.gatewayUrl} ${config.privateKey ? "✓" : "✗"}`,
-    `Provider ID  : ${config.providerId}`,
-    `Chain ID     : ${config.chainId}`,
-    `Private Key  : ${pkDisplay}`,
-    `Config file  : ~/.pi/x402-config.json`,
+    `Gateway URL   : ${config.gatewayUrl} ${config.privateKey ? "✓" : "✗"}`,
+    `Provider ID   : ${config.providerId}`,
+    `Provider URL  : ${providerUrlDisplay}`,
+    `Model Name    : ${config.modelName}`,
+    `Chain ID      : ${config.chainId}`,
+    `Private Key   : ${pkDisplay}`,
+    `Discovery URL : ${discoveryUrlDisplay}`,
+    `Allowlist     : ${config.allowlist}`,
+    `Config file   : ~/.pi/x402-config.json`,
   ];
   ctx.ui?.notify?.(lines.join("\n"), "info");
 }

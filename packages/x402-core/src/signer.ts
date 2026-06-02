@@ -2,6 +2,24 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { PrivateKeyAccount } from "viem";
 import type { X402Signer } from "./types.js";
 
+/**
+ * EVM wallet signer implementing the X402Signer interface.
+ *
+ * Reads the private key from an explicit parameter first, then falls back
+ * to the X402_PRIVATE_KEY environment variable. Uses personal_sign message
+ * signing for x402 payment authorization.
+ *
+ * @example
+ * ```typescript
+ * // From env var
+ * const signer = new EvmSigner("eip155:8453");
+ * // From explicit key
+ * const signer2 = new EvmSigner("eip155:8453", "0xabc...");
+ * if (await signer.isReady()) {
+ *   const signature = await signer.signPayment(paymentRequired);
+ * }
+ * ```
+ */
 export class EvmSigner implements X402Signer {
   private account: PrivateKeyAccount | null = null;
   private _address: string = "";
@@ -15,10 +33,19 @@ export class EvmSigner implements X402Signer {
     this.loadKey(privateKey);
   }
 
+  /**
+   * Update the private key at runtime (e.g. after TUI configuration).
+   * Pass null to clear the key and revert to env var lookup.
+   */
   setPrivateKey(key: string | null): void {
     this.loadKey(key);
   }
 
+  /**
+   * Load the private key with priority: explicit key > environment variable.
+   * When passed a non-null key, tries it first; falls back to env var on failure.
+   * When passed null or undefined, reads from X402_PRIVATE_KEY env var.
+   */
   private loadKey(explicitKey?: string | null): void {
     const candidateKey = explicitKey ?? process.env.X402_PRIVATE_KEY;
     const privateKey = candidateKey ?? undefined;
@@ -50,6 +77,11 @@ export class EvmSigner implements X402Signer {
     return this.account !== null;
   }
 
+  /**
+   * Sign a payment authorization message using personal_sign.
+   * Returns a PAYMENT-SIGNATURE header record for x402 retry.
+   * @throws If the signer is not ready.
+   */
   async signPayment(
     paymentRequiredRaw: unknown,
   ): Promise<Record<string, string>> {

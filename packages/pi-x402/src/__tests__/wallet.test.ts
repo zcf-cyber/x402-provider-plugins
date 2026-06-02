@@ -2,12 +2,29 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Mock } from "vitest";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+const { mockResolveConfig } = vi.hoisted(() => ({
+  mockResolveConfig: vi.fn(),
+}));
+
+vi.mock("../../extensions/config.js", () => ({
+  resolveConfig: mockResolveConfig,
+}));
+
 vi.mock("@x402-plugins/core", () => ({
   EvmSigner: vi.fn(),
 }));
 
 import registerX402Wallet from "../../extensions/x402-wallet.js";
 import { EvmSigner } from "@x402-plugins/core";
+
+const DEFAULT_TEST_CONFIG = {
+  gatewayUrl: "http://127.0.0.1:8080",
+  chainId: "eip155:8453",
+  privateKey: "",
+  providerId: "x402-gateway",
+  discoveryUrl: "",
+  allowlist: "*",
+};
 
 describe("registerX402Wallet", () => {
   let notify: Mock<(message: string, level: string) => void>;
@@ -33,6 +50,7 @@ describe("registerX402Wallet", () => {
       registerTool: vi.fn(),
       registerCommand: vi.fn(),
     } as unknown as ExtensionAPI;
+    mockResolveConfig.mockReturnValue(DEFAULT_TEST_CONFIG);
   });
 
   function mockSigner(ready: boolean, address?: string) {
@@ -94,6 +112,38 @@ describe("registerX402Wallet", () => {
     expect(result).toEqual({
       block: true,
       reason: "x402: wallet required before paid tool execution",
+    });
+  });
+
+  describe("config integration", () => {
+    it("passes chainId and privateKey from config to EvmSigner", () => {
+      mockResolveConfig.mockReturnValue({
+        ...DEFAULT_TEST_CONFIG,
+        chainId: "eip155:1",
+        privateKey: "0xsecret123",
+      });
+
+      registerX402Wallet(pi);
+
+      expect(EvmSigner).toHaveBeenCalledWith("eip155:1", "0xsecret123");
+    });
+
+    it("passes null privateKey when config has empty key", () => {
+      mockResolveConfig.mockReturnValue({
+        ...DEFAULT_TEST_CONFIG,
+        chainId: "eip155:8453",
+        privateKey: "",
+      });
+
+      registerX402Wallet(pi);
+
+      expect(EvmSigner).toHaveBeenCalledWith("eip155:8453", null);
+    });
+
+    it("calls resolveConfig with pi for CLI flag support", () => {
+      registerX402Wallet(pi);
+      // resolveConfig receives the pi object; wallet.ts casts it for optional getFlag
+      expect(mockResolveConfig).toHaveBeenCalledWith(pi);
     });
   });
 });
