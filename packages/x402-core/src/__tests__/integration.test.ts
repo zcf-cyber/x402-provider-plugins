@@ -4,7 +4,8 @@ import { createServer } from "http";
 import type { ChildProcess } from "child_process";
 import { createX402Fetch } from "../client.js";
 import { EvmSigner } from "../signer.js";
-import type { X402AuditEntry } from "../types.js";
+import type { X402AuditEntry, X402AuditSink } from "../types.js";
+import type { ProtocolHandler } from "../protocol/ProtocolHandler.js";
 
 const TEST_PRIVATE_KEY =
   "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -169,6 +170,78 @@ describe("x402-core integration against mock gateway", () => {
         /aborted|timeout|signal/i.test(err.message)
       );
     });
+
+    server.closeAllConnections?.();
+    server.close();
+  });
+});
+
+describe("Mock ProtocolHandler integration", () => {
+  let signer: EvmSigner;
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    vi.stubEnv("X402_PRIVATE_KEY", TEST_PRIVATE_KEY);
+    vi.stubEnv("X402_CHAIN_ID", "eip155:8453");
+    signer = new EvmSigner();
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.restoreAllMocks();
+  });
+
+  it("should satisfy ProtocolHandler interface with a mock implementation", () => {
+    const mockHandler: ProtocolHandler = {
+      wrapFetch: (baseFetch) => baseFetch,
+      registerAuditHooks: (_audit: X402AuditSink, _getRequestId: () => string) => {},
+    };
+    expect(typeof mockHandler.wrapFetch).toBe("function");
+    expect(typeof mockHandler.registerAuditHooks).toBe("function");
+  });
+
+  it("should isolate audit entries per request via separate requestIds", async () => {
+    // Alternating 402/200 gateway to exercise full payment cycle twice
+    let count = 0;
+    const server = createServer((_req, res) => {
+      count++;
+      const p = Buffer.from(JSON.stringify({
+        x402Version: 2,
+        accepts: [{ scheme: "exact_evm", network: "eip155:8453", payTo: "0x0", amount: "1", asset: "0x0", maxTimeoutSeconds: 300 }],
+      })).toString("base64");
+      if (count % 2 === 1) {
+        res.writeHead(402, { "PAYMENT-REQUIRED": p, "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Payment required" }));
+      } else {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ result: "ok" }));
+      }
+    });
+
+    const port = await new Promise<number>((resolve) =>
+      server.listen(0, () => resolve((server.address() as { port: number }).port)),
+    );
+
+    const entries: X402AuditEntry[] = [];
+    const f = createX402Fetch({ gatewayBaseUrl: `http://127.0.0.1:${port}`, maxRetries: 1 }, signer, (e) => entries.push(e));
+
+    await f(`http://127.0.0.1:${port}/v1`);
+    await f(`http://127.0.0.1:${port}/v1`);
+
+    // Two distinct requestIds
+    expect(new Set(entries.map((e) => e.requestId)).size).toBe(2);
+
+    // Each request covers 402_received + signed phases
+    const byReq = new Map<string, string[]>();
+    for (const e of entries) {
+      const a = byReq.get(e.requestId) ?? [];
+      a.push(e.phase);
+      byReq.set(e.requestId, a);
+    }
+    for (const phases of byReq.values()) {
+      expect(phases).toContain("402_received");
+      expect(phases).toContain("signed");
+    }
 
     server.closeAllConnections?.();
     server.close();
