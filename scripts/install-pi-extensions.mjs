@@ -12,7 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = join(root, "packages", "pi-x402", "extensions");
 const destDir = join(homedir(), ".pi", "agent", "extensions");
 
-const files = ["x402-provider.ts", "x402-wallet.ts", "x402-discovery.ts"];
+const files = ["x402-provider.ts", "x402-wallet.ts", "x402-discovery.ts", "config.ts"];
 
 mkdirSync(destDir, { recursive: true });
 

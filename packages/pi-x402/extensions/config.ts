@@ -129,9 +129,47 @@ export function registerConfigUI(pi: ExtensionAPI): void {
       const subCmd = args[0] ?? "";
       if (subCmd === "edit") await editWizard(ctx);
       else if (subCmd === "status") await showStatus(ctx);
-      else ctx.ui?.notify?.("[x402] Usage: /x402-config edit | /x402-config status", "info");
+      else if (subCmd === "set") await handleSet(ctx, args.slice(1));
+      else ctx.ui?.notify?.(
+        "[x402] Usage: /x402-config edit | /x402-config status | /x402-config set <key> <value>",
+        "info",
+      );
     },
   });
+}
+
+// ── set Command ───────────────────────────────────────────────
+
+const VALID_SET_KEYS = new Set<string>([
+  "gatewayUrl", "chainId", "privateKey", "providerId",
+  "providerUrl", "modelName", "discoveryUrl", "allowlist",
+]);
+
+async function handleSet(
+  ctx: { ui?: { notify?: (message: string, level: string) => void } },
+  args: string[],
+): Promise<void> {
+  const key = args[0] ?? "";
+  const value = args.slice(1).join(" ");
+
+  if (!key || !value) {
+    ctx.ui?.notify?.(
+      "[x402] Usage: /x402-config set <key> <value>\nKeys: gatewayUrl, chainId, privateKey, providerId, providerUrl, modelName, discoveryUrl, allowlist",
+      "info",
+    );
+    return;
+  }
+
+  if (!VALID_SET_KEYS.has(key)) {
+    ctx.ui?.notify?.(
+      `[x402] Unknown key "${key}".\nValid: ${[...VALID_SET_KEYS].join(", ")}`,
+      "error",
+    );
+    return;
+  }
+
+  saveConfig({ [key]: value });
+  ctx.ui?.notify?.(`[x402] ${key} → ${value}`, "info");
 }
 
 // ── TUI Wizard ───────────────────────────────────────────────
