@@ -6,7 +6,7 @@ const { mockResolveConfig } = vi.hoisted(() => ({
   mockResolveConfig: vi.fn(),
 }));
 
-vi.mock("../../extensions/config.js", () => ({
+vi.mock("../profile.js", () => ({
   resolveConfig: mockResolveConfig,
 }));
 
