@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createX402Fetch, EvmSigner } from "@x402-plugins/core";
-import { resolveConfig, registerConfigUI } from "./config.js";
+import { resolveConfig, registerConfigUI } from "../src/profile.js";
 
 export default function registerX402Provider(pi: ExtensionAPI): void {
   registerConfigUI(pi);

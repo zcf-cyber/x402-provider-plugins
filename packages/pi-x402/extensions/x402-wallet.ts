@@ -3,7 +3,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { EvmSigner } from "@x402-plugins/core";
-import { resolveConfig } from "./config.js";
+import { resolveConfig } from "../src/profile.js";
 
 function maskAddress(addr: string): string {
   if (!addr || addr.length < 10) return addr;

@@ -105,7 +105,7 @@ export function resolveConfig(pi?: {
 
 export function registerConfigUI(pi: ExtensionAPI): void {
   // Register CLI flags (gracefully handle absence of registerFlag)
-  const registerFlag = (pi as Record<string, unknown>)
+  const registerFlag = (pi as unknown as Record<string, unknown>)
     .registerFlag as
     | ((name: string, opts: Record<string, unknown>) => void)
     | undefined;
@@ -125,7 +125,9 @@ export function registerConfigUI(pi: ExtensionAPI): void {
   // Register /x402-config command
   pi.registerCommand("x402-config", {
     description: "Configure x402 wallet and provider",
-    handler: async (args: string[], ctx) => {
+    handler: async (...rawArgs: unknown[]) => {
+      const args = (rawArgs[0] as string[] | undefined) ?? [];
+      const ctx = rawArgs[1] as { ui?: { input?: (title: string, placeholder: string) => Promise<string | undefined>; notify?: (message: string, level: string) => void } };
       const subCmd = args[0] ?? "";
       if (subCmd === "edit") await editWizard(ctx);
       else if (subCmd === "status") await showStatus(ctx);

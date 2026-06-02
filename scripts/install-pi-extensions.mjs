@@ -12,7 +12,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const srcDir = join(root, "packages", "pi-x402", "extensions");
 const destDir = join(homedir(), ".pi", "agent", "extensions");
 
-const files = ["x402-provider.ts", "x402-wallet.ts", "x402-discovery.ts", "config.ts"];
+const files = ["x402-provider.ts", "x402-wallet.ts", "x402-discovery.ts"];
 
 mkdirSync(destDir, { recursive: true });
 
@@ -40,3 +40,10 @@ if (!existsSync(coreSymlink)) {
 } else {
   console.log(`@x402-plugins/core already linked`);
 }
+
+// Also copy profile.ts to ~/.pi/agent/src/ so extensions can import from ../src/profile.js
+const profileSrc = join(root, "packages", "pi-x402", "src", "profile.ts");
+const piSrcDir = join(homedir(), ".pi", "agent", "src");
+mkdirSync(piSrcDir, { recursive: true });
+cpSync(profileSrc, join(piSrcDir, "profile.ts"), { force: true });
+console.log(`installed profile to ${piSrcDir}/profile.ts`);
