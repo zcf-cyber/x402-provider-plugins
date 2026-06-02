@@ -3,6 +3,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { EvmSigner } from "@x402-plugins/core";
+import { resolveConfig } from "./config.js";
 
 function maskAddress(addr: string): string {
   if (!addr || addr.length < 10) return addr;
@@ -10,7 +11,11 @@ function maskAddress(addr: string): string {
 }
 
 export default function registerX402Wallet(pi: ExtensionAPI): void {
-  const signer = new EvmSigner();
+  // Resolve config with priority: CLI flags > file > env > defaults
+  const config = resolveConfig(
+    pi as unknown as { getFlag?: (name: string) => string | undefined },
+  );
+  const signer = new EvmSigner(config.chainId, config.privateKey || null);
 
   pi.on("session_start", async (_event, ctx) => {
     const ready = await signer.isReady();
