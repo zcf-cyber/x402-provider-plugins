@@ -5,6 +5,8 @@ import type {
   SchemeNetworkClient,
 } from "@x402/core/types";
 import type { X402Signer } from "../types.js";
+import type { MessageBuilder } from "../message/MessageBuilder.js";
+import { TemplateMessageBuilder } from "../message/TemplateMessageBuilder.js";
 
 /**
  * EVM scheme client implementing SchemeNetworkClient interface.
@@ -14,14 +16,22 @@ import type { X402Signer } from "../types.js";
  *
  * Extracted from client.ts to keep scheme logic independent of the
  * fetch wrapper and ProtocolHandler plumbing (Fix-P1-PR1 Phase 2).
+ *
+ * Phase 3: message body construction delegated to pluggable MessageBuilder.
  */
 export class EvmSchemeClient implements SchemeNetworkClient {
   readonly scheme: string;
   private signer: X402Signer;
+  private messageBuilder: MessageBuilder;
 
-  constructor(scheme: string, signer: X402Signer) {
+  constructor(
+    scheme: string,
+    signer: X402Signer,
+    messageBuilder?: MessageBuilder,
+  ) {
     this.scheme = scheme;
     this.signer = signer;
+    this.messageBuilder = messageBuilder ?? new TemplateMessageBuilder();
   }
 
   async createPaymentPayload(
@@ -36,7 +46,7 @@ export class EvmSchemeClient implements SchemeNetworkClient {
       );
     }
 
-    const paymentRequired = this.buildPaymentRequired(
+    const paymentRequired = this.messageBuilder.buildMessage(
       x402Version,
       paymentRequirements,
       context,
@@ -53,37 +63,6 @@ export class EvmSchemeClient implements SchemeNetworkClient {
     return {
       x402Version,
       payload: { signature },
-    };
-  }
-
-  private buildPaymentRequired(
-    x402Version: number,
-    paymentRequirements: PaymentRequirements,
-    context?: PaymentPayloadContext,
-  ): Record<string, unknown> {
-    const acceptsEntry: Record<string, unknown> = {
-      network: paymentRequirements.network,
-      scheme: paymentRequirements.scheme,
-      payTo: paymentRequirements.payTo,
-      amount: paymentRequirements.amount,
-      asset: paymentRequirements.asset,
-      maxTimeoutSeconds: paymentRequirements.maxTimeoutSeconds,
-    };
-
-    const extra = paymentRequirements.extra as
-      | Record<string, unknown>
-      | undefined;
-    if (extra?.maxAmountRequired) {
-      acceptsEntry.maxAmountRequired = extra.maxAmountRequired;
-    }
-    if (extra?.resource) {
-      acceptsEntry.resource = extra.resource;
-    }
-
-    return {
-      x402Version,
-      accepts: [acceptsEntry],
-      extensions: context?.extensions,
     };
   }
 }
