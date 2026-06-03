@@ -147,7 +147,7 @@ export default async function registerX402Provider(pi: ExtensionAPI): Promise<vo
     maxTokens: 8_192,
   }));
 
-  pi.registerProvider(config.providerId, {
+  pi.registerProvider("x402", {
     name: "X402 Gateway",
     baseUrl: config.providerUrl || config.gatewayUrl,
     apiKey: "X402_WALLET",
@@ -164,12 +164,12 @@ export default async function registerX402Provider(pi: ExtensionAPI): Promise<vo
       const addr = signer.address;
       const masked = addr.length >= 10 ? `${addr.slice(0, 6)}...${addr.slice(-4)}` : addr;
       ctx.ui?.notify(
-        `[x402] Provider "${config.providerId}" registered with ${count} model${s}, wallet ${masked}`,
+        `[x402] Provider "x402" registered with ${count} model${s}, wallet ${masked}`,
         "info",
       );
     } else {
       ctx.ui?.notify(
-        `[x402] Provider "${config.providerId}" registered with ${count} model${s} — wallet not configured. Run /x402-config edit to set up.`,
+        `[x402] Provider "x402" registered with ${count} model${s} — wallet not configured. Run /x402-config edit to set up.`,
         "warning",
       );
     }

@@ -14,7 +14,6 @@ export interface X402Config {
   gatewayUrl: string;
   chainId: string;
   privateKey: string;
-  providerId: string;
   providerUrl: string;
   modelName: string;
   discoveryUrl: string;
@@ -27,7 +26,6 @@ const DEFAULTS: X402Config = {
   gatewayUrl: "http://127.0.0.1:8080",
   chainId: "eip155:8453",
   privateKey: "",
-  providerId: "x402-gateway",
   providerUrl: "",
   modelName: "",
   discoveryUrl: "",
@@ -63,7 +61,6 @@ const FLAG_MAP: Record<keyof X402Config, { flag: string; env: string } | null> =
   gatewayUrl: { flag: "x402-gateway-url", env: "X402_GATEWAY_URL" },
   chainId: { flag: "x402-chain-id", env: "X402_CHAIN_ID" },
   privateKey: { flag: "x402-private-key", env: "X402_PRIVATE_KEY" },
-  providerId: { flag: "x402-provider-id", env: "X402_PROVIDER_ID" },
   providerUrl: { flag: "x402-provider-url", env: "X402_PROVIDER_URL" },
   modelName: { flag: "x402-model-name", env: "X402_MODEL_NAME" },
   discoveryUrl: { flag: "x402-discovery-url", env: "X402_DISCOVERY_URL" },
@@ -93,7 +90,6 @@ export function resolveConfig(pi?: {
     gatewayUrl: resolve("gatewayUrl"),
     chainId: resolve("chainId"),
     privateKey: resolve("privateKey"),
-    providerId: resolve("providerId"),
     providerUrl: resolve("providerUrl"),
     modelName: resolve("modelName"),
     discoveryUrl: resolve("discoveryUrl"),
@@ -114,7 +110,6 @@ export function registerConfigUI(pi: ExtensionAPI): void {
       ["x402-gateway-url", "x402 Gateway URL"],
       ["x402-chain-id", "Chain ID (e.g. eip155:8453)"],
       ["x402-private-key", "EVM private key for signing"],
-      ["x402-provider-id", "Provider identifier"],
       ["x402-provider-url", "Provider API base URL (optional)"],
       ["x402-model-name", "Model name/ID to use (e.g. gpt-4)"],
       ["x402-discovery-url", "Discovery service URL"],
@@ -143,7 +138,7 @@ export function registerConfigUI(pi: ExtensionAPI): void {
 // ── set Command ───────────────────────────────────────────────
 
 const VALID_SET_KEYS = new Set<string>([
-  "gatewayUrl", "chainId", "privateKey", "providerId",
+  "gatewayUrl", "chainId", "privateKey",
   "providerUrl", "modelName", "discoveryUrl", "allowlist",
 ]);
 
@@ -156,7 +151,7 @@ async function handleSet(
 
   if (!key || !value) {
     ctx.ui?.notify?.(
-      "[x402] Usage: /x402-config set <key> <value>\nKeys: gatewayUrl, chainId, privateKey, providerId, providerUrl, modelName, discoveryUrl, allowlist",
+      "[x402] Usage: /x402-config set <key> <value>\nKeys: gatewayUrl, chainId, privateKey, providerUrl, modelName, discoveryUrl, allowlist",
       "info",
     );
     return;
@@ -187,30 +182,24 @@ async function editWizard(ctx: {
 
   // 1. Gateway URL
   const gatewayUrl = ctx.ui?.input
-    ? await ctx.ui.input("1/8 — x402 Gateway URL", config.gatewayUrl)
+    ? await ctx.ui.input("1/7 — x402 Gateway URL", config.gatewayUrl)
     : undefined;
   if (gatewayUrl !== undefined && gatewayUrl !== "") updates.gatewayUrl = gatewayUrl;
 
-  // 2. Provider ID
-  const providerId = ctx.ui?.input
-    ? await ctx.ui.input("2/8 — Provider ID", config.providerId)
-    : undefined;
-  if (providerId !== undefined && providerId !== "") updates.providerId = providerId;
-
-  // 3. Provider URL (optional — falls back to gateway URL if empty)
+  // 2. Provider URL (optional — falls back to gateway URL if empty)
   const providerUrlPlaceholder = config.providerUrl || "(same as gateway URL)";
   const providerUrl = ctx.ui?.input
-    ? await ctx.ui.input("3/8 — Provider API URL (optional)", providerUrlPlaceholder)
+    ? await ctx.ui.input("2/7 — Provider API URL (optional)", providerUrlPlaceholder)
     : undefined;
   if (providerUrl !== undefined) updates.providerUrl = providerUrl;
 
-  // 4. Model name/ID
+  // 3. Model name/ID
   const modelName = ctx.ui?.input
-    ? await ctx.ui.input("4/8 — Model name/ID", config.modelName)
+    ? await ctx.ui.input("3/7 — Model name/ID", config.modelName)
     : undefined;
   if (modelName !== undefined && modelName !== "") updates.modelName = modelName;
 
-  // 5. Chain ID (with suggestions)
+  // 4. Chain ID (with suggestions)
   const chainPrompt = [
     "eip155:8453  (Base)",
     "eip155:84532 (Sepolia)",
@@ -219,30 +208,30 @@ async function editWizard(ctx: {
     `Current: ${config.chainId}`,
   ].join("\n");
   const chainId = ctx.ui?.input
-    ? await ctx.ui.input("5/8 — Chain ID", chainPrompt)
+    ? await ctx.ui.input("4/7 — Chain ID", chainPrompt)
     : undefined;
   if (chainId !== undefined && chainId !== "") updates.chainId = chainId;
 
-  // 6. Private Key
+  // 5. Private Key
   const pkPlaceholder = config.privateKey
     ? `${config.privateKey.slice(0, 6)}...${config.privateKey.slice(-4)} (set)`
     : "0x... (not set)";
   const privateKey = ctx.ui?.input
-    ? await ctx.ui.input("6/8 — EVM Private Key", pkPlaceholder)
+    ? await ctx.ui.input("5/7 — EVM Private Key", pkPlaceholder)
     : undefined;
   if (privateKey !== undefined && privateKey !== "") updates.privateKey = privateKey;
 
-  // 7. Discovery URL (optional)
+  // 6. Discovery URL (optional)
   const discoPlaceholder = config.discoveryUrl || "(not set)";
   const discoveryUrl = ctx.ui?.input
-    ? await ctx.ui.input("7/8 — Discovery URL (optional)", discoPlaceholder)
+    ? await ctx.ui.input("6/7 — Discovery URL (optional)", discoPlaceholder)
     : undefined;
   if (discoveryUrl !== undefined) updates.discoveryUrl = discoveryUrl;
 
-  // 8. Allowlist (optional, comma-separated or * for all)
+  // 7. Allowlist (optional, comma-separated or * for all)
   const allowlistPlaceholder = config.allowlist || "*";
   const allowlist = ctx.ui?.input
-    ? await ctx.ui.input("8/8 — Allowlist (* or comma-separated URLs)", allowlistPlaceholder)
+    ? await ctx.ui.input("7/7 — Allowlist (* or comma-separated URLs)", allowlistPlaceholder)
     : undefined;
   if (allowlist !== undefined) updates.allowlist = allowlist;
 
@@ -271,7 +260,6 @@ async function showStatus(ctx: {
   const lines = [
     "x402 Configuration Status",
     `Gateway URL   : ${config.gatewayUrl} ${config.privateKey ? "✓" : "✗"}`,
-    `Provider ID   : ${config.providerId}`,
     `Provider URL  : ${providerUrlDisplay}`,
     `Model Name    : ${config.modelName}`,
     `Chain ID      : ${config.chainId}`,
