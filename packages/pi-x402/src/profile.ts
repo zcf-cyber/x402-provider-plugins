@@ -27,7 +27,7 @@ const DEFAULTS: X402Config = {
   chainId: "eip155:8453",
   privateKey: "",
   providerUrl: "",
-  modelName: "default",
+  modelName: "",
   discoveryUrl: "",
   allowlist: "*",
 };
