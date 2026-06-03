@@ -47,7 +47,7 @@ describe("registerX402Provider", () => {
   it("registers provider with expected id", () => {
     registerX402Provider(pi);
     expect(pi.registerProvider).toHaveBeenCalledWith(
-      "x402-gateway",
+      "x402",
       expect.objectContaining({ name: "X402 Gateway", api: "openai-completions" }),
     );
     expect(registered).toBeDefined();

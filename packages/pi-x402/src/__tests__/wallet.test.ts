@@ -21,7 +21,6 @@ const DEFAULT_TEST_CONFIG = {
   gatewayUrl: "http://127.0.0.1:8080",
   chainId: "eip155:8453",
   privateKey: "",
-  providerId: "x402-gateway",
   discoveryUrl: "",
   allowlist: "*",
 };
