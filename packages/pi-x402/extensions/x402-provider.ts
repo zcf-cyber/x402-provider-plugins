@@ -2,6 +2,22 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { createX402Fetch, EvmSigner } from "@x402-plugins/core";
 import { resolveConfig, registerConfigUI } from "../src/profile.js";
 
+// ── Pi streamSimple types (per Pi's actual calling convention) ──
+
+interface PiModel {
+  id: string;
+  name: string;
+  api: string;
+  provider: unknown;
+  baseUrl: string;
+}
+
+interface PiContext {
+  messages: Array<{ role: string; content: string }>;
+  temperature?: number;
+  maxTokens?: number;
+}
+
 export default async function registerX402Provider(pi: ExtensionAPI): Promise<void> {
   registerConfigUI(pi);
 
@@ -44,33 +60,26 @@ export default async function registerX402Provider(pi: ExtensionAPI): Promise<vo
   );
 
   async function* streamSimple(
-    params: {
-      model: string;
-      messages: Array<{ role: string; content: string }>;
-      temperature?: number;
-      max_tokens?: number;
-    },
-    ctx?: ExtensionContext,
+    model: PiModel,
+    context: PiContext,
+    _options?: Record<string, unknown>,
   ): AsyncGenerator<{ content: string; role?: string }> {
-    // Validate model name against discovered models
-    if (!availableModelIds.includes(params.model)) {
+    // Validate model name against discovered models (use model.id — the bare name)
+    if (!availableModelIds.includes(model.id)) {
       const modelList = availableModelIds.map((m) => `  - ${m}`).join("\n");
-      const errMsg = `x402: model "${params.model}" not found.\nAvailable models:\n${modelList}`;
-      ctx.ui?.notify?.(
-        `[x402] model "${params.model}" is not available at this gateway.\nAvailable: ${availableModelIds.join(", ")}`,
-        "error",
+      throw new Error(
+        `x402: model "${model.id}" not found.\nAvailable models:\n${modelList}`,
       );
-      throw new Error(errMsg);
     }
 
     const baseUrl = config.providerUrl || config.gatewayUrl;
     const url = `${baseUrl}/v1/chat/completions`;
     const body = JSON.stringify({
-      model: params.model,
-      messages: params.messages,
+      model: model.id,
+      messages: context.messages,
       stream: true,
-      temperature: params.temperature,
-      max_tokens: params.max_tokens,
+      temperature: context.temperature,
+      max_tokens: context.maxTokens,
     });
 
     let response: Response;
@@ -82,21 +91,16 @@ export default async function registerX402Provider(pi: ExtensionAPI): Promise<vo
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx.ui?.notify(`[x402] Provider error: ${message}`, "error");
       throw new Error(`x402: provider fetch failed — ${message}`);
     }
 
     if (!response.ok) {
-      const errorMsg = `x402: gateway returned ${response.status}`;
-      ctx.ui?.notify(`[x402] ${errorMsg}`, "error");
-      throw new Error(errorMsg);
+      throw new Error(`x402: gateway returned ${response.status}`);
     }
 
     const reader = response.body?.getReader();
     if (!reader) {
-      const errorMsg = "x402: gateway returned empty body";
-      ctx.ui?.notify(`[x402] ${errorMsg}`, "error");
-      throw new Error(errorMsg);
+      throw new Error("x402: gateway returned empty body");
     }
 
     const decoder = new TextDecoder();
@@ -125,7 +129,6 @@ export default async function registerX402Provider(pi: ExtensionAPI): Promise<vo
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      ctx.ui?.notify(`[x402] Stream error: ${message}`, "error");
       throw new Error(`x402: stream read failed — ${message}`);
     } finally {
       reader.releaseLock();
