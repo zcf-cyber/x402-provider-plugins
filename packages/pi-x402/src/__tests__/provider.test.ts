@@ -72,10 +72,10 @@ describe("registerX402Provider", () => {
     vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
     await registerX402Provider(pi);
     const streamSimple = registered!.streamSimple as (
-      params: Record<string, unknown>, ctx?: ExtensionContext,
+      model: Record<string, unknown>, context: Record<string, unknown>,
     ) => AsyncGenerator<{ content: string; role?: string }>;
     for await (const _ of streamSimple(
-      { model: "gpt-4o", messages: [{ role: "user", content: "hello" }] }, ctx,
+      { id: "gpt-4o" }, { messages: [{ role: "user", content: "hello" }] },
     )) { /* consume */ }
     expect(fetchFn).toHaveBeenCalledWith(
       "http://127.0.0.1:8080/v1/chat/completions",
@@ -96,11 +96,11 @@ describe("registerX402Provider", () => {
     vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
     await registerX402Provider(pi);
     const streamSimple = registered!.streamSimple as (
-      params: Record<string, unknown>, ctx?: ExtensionContext,
+      model: Record<string, unknown>, context: Record<string, unknown>,
     ) => AsyncGenerator<{ content: string; role?: string }>;
     const chunks: Array<{ content: string; role?: string }> = [];
     for await (const chunk of streamSimple(
-      { model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }, ctx,
+      { id: "gpt-4o" }, { messages: [{ role: "user", content: "hi" }] },
     )) chunks.push(chunk);
     expect(chunks).toEqual([{ content: "Hello ", role: "assistant" }, { content: "world" }]);
   });
@@ -110,14 +110,13 @@ describe("registerX402Provider", () => {
     vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
     await registerX402Provider(pi);
     const streamSimple = registered!.streamSimple as (
-      params: Record<string, unknown>, ctx?: ExtensionContext,
+      model: Record<string, unknown>, context: Record<string, unknown>,
     ) => AsyncGenerator<{ content: string; role?: string }>;
     await expect(
       (async () => {
-        for await (const _ of streamSimple({ model: "gpt-4o", messages: [] }, ctx)) { /* consume */ }
+        for await (const _ of streamSimple({ id: "gpt-4o" }, { messages: [] })) { /* consume */ }
       })(),
     ).rejects.toThrow("x402: gateway returned 500");
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("500"), "error");
   });
 
   it("throws on empty response body", async () => {
@@ -125,29 +124,27 @@ describe("registerX402Provider", () => {
     vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
     await registerX402Provider(pi);
     const streamSimple = registered!.streamSimple as (
-      params: Record<string, unknown>, ctx?: ExtensionContext,
+      model: Record<string, unknown>, context: Record<string, unknown>,
     ) => AsyncGenerator<{ content: string; role?: string }>;
     await expect(
       (async () => {
-        for await (const _ of streamSimple({ model: "gpt-4o", messages: [] }, ctx)) { /* consume */ }
+        for await (const _ of streamSimple({ id: "gpt-4o" }, { messages: [] })) { /* consume */ }
       })(),
     ).rejects.toThrow("x402: gateway returned empty body");
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("empty body"), "error");
   });
 
-  it("surfaces fetch errors via ctx.ui.notify", async () => {
+  it("surfaces fetch errors as thrown exception", async () => {
     const fetchFn = vi.fn().mockRejectedValue(new Error("network timeout"));
     vi.mocked(createX402Fetch).mockReturnValue(fetchFn);
     await registerX402Provider(pi);
     const streamSimple = registered!.streamSimple as (
-      params: Record<string, unknown>, ctx?: ExtensionContext,
+      model: Record<string, unknown>, context: Record<string, unknown>,
     ) => AsyncGenerator<{ content: string; role?: string }>;
     await expect(
       (async () => {
-        for await (const _ of streamSimple({ model: "gpt-4o", messages: [] }, ctx)) { /* consume */ }
+        for await (const _ of streamSimple({ id: "gpt-4o" }, { messages: [] })) { /* consume */ }
       })(),
     ).rejects.toThrow("x402: provider fetch failed");
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("network timeout"), "error");
   });
 
   // ── Model discovery tests ────────────────────────────────
@@ -187,16 +184,15 @@ describe("registerX402Provider", () => {
     delete process.env.X402_MODEL_NAME;
   });
 
-  it("streamSimple rejects unknown model and notifies", async () => {
+  it("streamSimple rejects unknown model", async () => {
     await registerX402Provider(pi);
     const streamSimple = registered!.streamSimple as (
-      params: Record<string, unknown>, ctx?: ExtensionContext,
+      model: Record<string, unknown>, context: Record<string, unknown>,
     ) => AsyncGenerator<{ content: string; role?: string }>;
     await expect(
       (async () => {
-        for await (const _ of streamSimple({ model: "bad", messages: [] }, ctx)) { /* consume */ }
+        for await (const _ of streamSimple({ id: "bad" }, { messages: [] })) { /* consume */ }
       })(),
     ).rejects.toThrow('x402: model "bad" not found');
-    expect(notify).toHaveBeenCalledWith(expect.stringContaining("not available"), "error");
   });
 });
