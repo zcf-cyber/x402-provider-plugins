@@ -133,6 +133,60 @@ export function registerConfigUI(pi: ExtensionAPI): void {
       );
     },
   });
+
+  // Register /x402-status shortcut command
+  pi.registerCommand("x402-status", {
+    description: "Show x402 configuration status (shortcut for /x402-config status)",
+    handler: async (...rawArgs: unknown[]) => {
+      const ctx = rawArgs[1] as { ui?: { notify?: (message: string, level: string) => void } };
+      await showStatus(ctx);
+    },
+  });
+
+  // Register /x402-models command — gateway model dynamic discovery
+  pi.registerCommand("x402-models", {
+    description: "List available models from the configured x402 gateway",
+    handler: async (...rawArgs: unknown[]) => {
+      const ctx = rawArgs[1] as { ui?: { notify?: (message: string, level: string) => void } };
+      const config = resolveConfig();
+      if (!config.gatewayUrl) {
+        ctx.ui?.notify?.("[x402] No gateway URL configured. Run /x402-config edit to set up.", "warning");
+        return;
+      }
+      try {
+        const modelsUrl = `${config.gatewayUrl}/v1/models`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10_000);
+        const resp = await fetch(modelsUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (!resp.ok) {
+          ctx.ui?.notify?.(
+            `[x402] Gateway at ${config.gatewayUrl} returned ${resp.status}`,
+            "error",
+          );
+          return;
+        }
+        const data = (await resp.json()) as { data?: Array<{ id: string }> };
+        if (!data.data || !Array.isArray(data.data) || data.data.length === 0) {
+          ctx.ui?.notify?.(
+            `[x402] No models available at ${config.gatewayUrl}`,
+            "warning",
+          );
+          return;
+        }
+        const modelNames = data.data.map((m) => m.id);
+        const lines = [`x402 Models at ${config.gatewayUrl}:`];
+        for (const name of modelNames) lines.push(`  - ${name}`);
+        ctx.ui?.notify?.(lines.join("\n"), "info");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.ui?.notify?.(
+          `[x402] Failed to fetch models — ${message}`,
+          "error",
+        );
+      }
+    },
+  });
 }
 
 // ── set Command ───────────────────────────────────────────────
@@ -259,11 +313,11 @@ async function showStatus(ctx: {
   const discoveryUrlDisplay = config.discoveryUrl || "(not set)";
   const lines = [
     "x402 Configuration Status",
-    `Gateway URL   : ${config.gatewayUrl} ${config.privateKey ? "✓" : "✗"}`,
+    `Gateway URL   : ${config.gatewayUrl}`,
     `Provider URL  : ${providerUrlDisplay}`,
     `Model Name    : ${config.modelName}`,
     `Chain ID      : ${config.chainId}`,
-    `Private Key   : ${pkDisplay}`,
+    `Private Key   : ${pkDisplay} ${config.privateKey ? "✓" : "✗"}`,
     `Discovery URL : ${discoveryUrlDisplay}`,
     `Allowlist     : ${config.allowlist}`,
     `Config file   : ~/.pi/x402-config.json`,
