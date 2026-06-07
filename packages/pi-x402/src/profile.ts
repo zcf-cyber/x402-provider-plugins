@@ -179,6 +179,13 @@ export function registerConfigUI(pi: ExtensionAPI): void {
         for (const name of modelNames) lines.push(`  - ${name}`);
         ctx.ui?.notify?.(lines.join("\n"), "info");
       } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          ctx.ui?.notify?.(
+            `[x402] Gateway request timed out (10s) — ${config.gatewayUrl}`,
+            "error",
+          );
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         ctx.ui?.notify?.(
           `[x402] Failed to fetch models — ${message}`,
