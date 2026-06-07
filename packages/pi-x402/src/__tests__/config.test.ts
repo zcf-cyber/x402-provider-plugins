@@ -21,6 +21,7 @@ import { loadConfig, saveConfig, resolveConfig, registerConfigUI } from "../prof
 describe("config", () => {
   let pi: ExtensionAPI;
   let notify: Mock<(message: string, level: string) => void>;
+  let input: Mock<(title: string, placeholder: string) => Promise<string | undefined>>;
   let rawFetch: Mock<typeof fetch>;
   let registeredCommands: Record<string, unknown>;
 
@@ -31,6 +32,7 @@ describe("config", () => {
     mockWriteFile.mockReturnValue(undefined);
     mockMkdir.mockReturnValue(undefined);
     notify = vi.fn();
+    input = vi.fn().mockResolvedValue(undefined); // default: return undefined (skip all fields)
     rawFetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ data: [{ id: "gpt-4o" }, { id: "claude-3" }] }), { status: 200 }),
     );
@@ -112,6 +114,44 @@ describe("config", () => {
     expect((notify.mock.calls[0][0] as string)).toMatch(/Private Key\s+:.*✗/);
   });
 
+  // ── /x402-config set ─────────────────────────────────────────
+
+  it("/x402-config set saves valid key to config", async () => {
+    registerConfigUI(pi);
+    const cmd = registeredCommands["x402-config"] as { handler: (...a: unknown[]) => Promise<void> };
+    await cmd.handler(["set", "gatewayUrl", "https://custom.example.com"], { ui: { notify } });
+    expect(mockWriteFile).toHaveBeenCalled();
+    const saved = JSON.parse(mockWriteFile.mock.calls[0][1] as string);
+    expect(saved.gatewayUrl).toBe("https://custom.example.com");
+  });
+
+  it("/x402-config set shows error for unknown key", async () => {
+    registerConfigUI(pi);
+    const cmd = registeredCommands["x402-config"] as { handler: (...a: unknown[]) => Promise<void> };
+    await cmd.handler(["set", "badkey", "value"], { ui: { notify } });
+    expect(notify.mock.calls[0][1]).toBe("error");
+    expect((notify.mock.calls[0][0] as string)).toContain("Unknown key");
+  });
+
+  it("/x402-config set shows usage when args are missing", async () => {
+    registerConfigUI(pi);
+    const cmd = registeredCommands["x402-config"] as { handler: (...a: unknown[]) => Promise<void> };
+    await cmd.handler(["set"], { ui: { notify } });
+    expect((notify.mock.calls[0][0] as string)).toContain("Usage:");
+  });
+
+  // ── /x402-config edit ────────────────────────────────────────
+
+  it("/x402-config edit saves updated gateway URL", async () => {
+    input.mockResolvedValueOnce("https://new-gw.example.com"); // step 1: gateway url
+    registerConfigUI(pi);
+    const cmd = registeredCommands["x402-config"] as { handler: (...a: unknown[]) => Promise<void> };
+    await cmd.handler(["edit"], { ui: { notify, input } });
+    const saved = JSON.parse(mockWriteFile.mock.calls[0][1] as string);
+    expect(saved.gatewayUrl).toBe("https://new-gw.example.com");
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining("Configuration saved"), "info");
+  });
+
   // ── /x402-models (gateway model dynamic discovery UI) ────────
 
   it("/x402-models fetches /v1/models and displays available models", async () => {
@@ -152,5 +192,16 @@ describe("config", () => {
     await cmd.handler([], { ui: { notify } });
     expect(notify.mock.calls[0][1]).toBe("error");
     expect((notify.mock.calls[0][0] as string)).toContain("network timeout");
+  });
+
+  it("/x402-models shows friendly message on AbortError (timeout)", async () => {
+    const abortErr = new Error("The operation was aborted");
+    abortErr.name = "AbortError";
+    rawFetch.mockRejectedValue(abortErr);
+    registerConfigUI(pi);
+    const cmd = registeredCommands["x402-models"] as { handler: (...a: unknown[]) => Promise<void> };
+    await cmd.handler([], { ui: { notify } });
+    expect(notify.mock.calls[0][1]).toBe("error");
+    expect((notify.mock.calls[0][0] as string)).toContain("timed out (10s)");
   });
 });

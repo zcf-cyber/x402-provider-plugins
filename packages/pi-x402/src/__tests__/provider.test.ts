@@ -7,8 +7,22 @@ vi.mock("@x402-plugins/core", () => ({
   EvmSigner: vi.fn(),
 }));
 
+vi.mock("../profile.js", () => ({
+  resolveConfig: vi.fn(() => ({
+    gatewayUrl: "http://127.0.0.1:8080",
+    chainId: "eip155:8453",
+    privateKey: "",
+    providerUrl: "",
+    modelName: "",
+    discoveryUrl: "",
+    allowlist: "*",
+  })),
+  registerConfigUI: vi.fn(),
+}));
+
 import registerX402Provider from "../../extensions/x402-provider.js";
 import { createX402Fetch, EvmSigner } from "@x402-plugins/core";
+import { resolveConfig } from "../profile.js";
 
 function mockResponse(chunks: string[]) {
   let i = 0;
@@ -177,11 +191,18 @@ describe("registerX402Provider", () => {
   });
 
   it("throws when modelName not in discovered models", async () => {
-    process.env.X402_MODEL_NAME = "nonexistent";
+    vi.mocked(resolveConfig).mockReturnValueOnce({
+      gatewayUrl: "http://127.0.0.1:8080",
+      chainId: "eip155:8453",
+      privateKey: "",
+      providerUrl: "",
+      modelName: "nonexistent",
+      discoveryUrl: "",
+      allowlist: "*",
+    });
     await expect(registerX402Provider(pi)).rejects.toThrow(
       'x402: model "nonexistent" not found at this gateway',
     );
-    delete process.env.X402_MODEL_NAME;
   });
 
   it("streamSimple rejects unknown model", async () => {
