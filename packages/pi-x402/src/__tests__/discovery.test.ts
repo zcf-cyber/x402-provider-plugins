@@ -106,7 +106,17 @@ describe("registerX402Discovery", () => {
     expect(notify).toHaveBeenCalledWith(expect.stringContaining("found 2 service(s) but none are in allowlist"), "warning");
   });
 
+  it("list_services: returns all services when allowlist is wildcard *", async () => {
+    process.env.X402_ALLOWLIST = "*"; // wildcard — consistent with config system default
+    registerX402Discovery(pi);
+    const r = (await tools["x402_list_services"].execute("r1w", { keyword: undefined }, null, null, ctx)) as { content: Array<{ text: string }> };
+    expect(r.content[0].text).toContain("OpenAI Gateway");
+    expect(r.content[0].text).toContain("Claude Gateway");
+    expect(r.content[0].text).toContain("Local LLM");
+  });
+
   it("list_services: returns no services when allowlist is empty (default-deny per FR-D3)", async () => {
+    process.env.X402_ALLOWLIST = ""; // explicit empty to override config default "*"
     registerX402Discovery(pi);
     const r = (await tools["x402_list_services"].execute("r1", { keyword: undefined }, null, null, ctx)) as { content: Array<{ text: string }> };
     expect(r.content[0].text).toBe("[x402] discovery index returned no services");

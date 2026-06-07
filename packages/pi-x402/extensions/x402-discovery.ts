@@ -3,13 +3,11 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
-const DISCOVERY_URL = process.env.X402_DISCOVERY_URL ?? "https://discovery.x402.network/v1/services";
+import { resolveConfig } from "../src/profile.js";
 
 // ── Helpers ────────────────────────────────────────────────────
 
-function getAllowlist(): Set<string> {
-  const raw = process.env.X402_ALLOWLIST ?? "";
+function getAllowlist(raw: string): Set<string> {
   if (!raw) return new Set();
   return new Set(raw.split(",").map((s) => s.trim()).filter(Boolean));
 }
@@ -30,14 +28,15 @@ function filterByAllowlist(
   allowlist: Set<string>,
 ) {
   if (allowlist.size === 0) return [];
+  if (allowlist.has("*")) return services; // wildcard: allow all
   return services.filter((s) => allowlist.has(s.endpoint));
 }
 
-async function queryDiscoveryIndex(): Promise<Array<{ name: string; endpoint: string; cost: string }>> {
+async function queryDiscoveryIndex(discoveryUrl: string): Promise<Array<{ name: string; endpoint: string; cost: string }>> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 5000);
   try {
-    const resp = await fetch(DISCOVERY_URL, { signal: ctrl.signal });
+    const resp = await fetch(discoveryUrl, { signal: ctrl.signal });
     if (!resp.ok) return [];
     const data = (await resp.json()) as { services?: Array<{ name: string; endpoint: string; cost_range?: string }> };
     return (data.services ?? []).map((s) => ({
@@ -59,7 +58,11 @@ function formatList(items: Array<{ name: string; endpoint: string; cost: string 
 // ── Registration ───────────────────────────────────────────────
 
 export default function registerX402Discovery(pi: ExtensionAPI): void {
-  const allowlist = getAllowlist();
+  const config = resolveConfig(
+    pi as unknown as { getFlag?: (name: string) => string | undefined },
+  );
+  const discoveryUrl = config.discoveryUrl || "https://discovery.x402.network/v1/services";
+  const allowlist = getAllowlist(config.allowlist);
 
   // ── /discover command (interactive keyword search) ───────
   pi.registerCommand("discover", {
@@ -70,7 +73,7 @@ export default function registerX402Discovery(pi: ExtensionAPI): void {
 
       let services;
       try {
-        services = await queryDiscoveryIndex();
+        services = await queryDiscoveryIndex(discoveryUrl);
       } catch {
         ctx.ui?.notify("[x402] discovery index unreachable", "error");
         return;
@@ -111,7 +114,7 @@ export default function registerX402Discovery(pi: ExtensionAPI): void {
     async execute(_id, params, _signal, _onUpdate, _ctx) {
       let services;
       try {
-        services = await queryDiscoveryIndex();
+        services = await queryDiscoveryIndex(discoveryUrl);
       } catch {
         return { content: [{ type: "text", text: "[x402] discovery index unreachable" }], details: {} };
       }
