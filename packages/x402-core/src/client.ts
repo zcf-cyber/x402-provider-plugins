@@ -1,18 +1,19 @@
 import type { X402AuditSink, X402ClientConfig, X402Signer } from "./types.js";
 import { V2ProtocolHandler } from "./protocol/V2ProtocolHandler.js";
 import { EvmSchemeClient } from "./scheme/EvmSchemeClient.js";
+import { x402Client, x402HTTPClient } from "@x402/core/client";
+import { ExactEvmScheme } from "@x402/evm";
+import { wrapFetchWithPayment } from "@x402/fetch";
+import type { Network } from "@x402/core/types";
+import type { ClientEvmSigner } from "@x402/evm";
 
 /**
  * Creates a fetch function that handles HTTP 402 and official x402 headers
  * via @x402/fetch with scheme clients wired to the signer.
  *
- * Wraps the native fetch to automatically handle 402 Payment Required responses
- * by creating and sending payment headers. Supports both V1 and V2 x402 protocol.
- *
- * @param config - Client configuration including gateway URL and protocol version
- * @param signer - The X402Signer implementation for signing payments
- * @param audit - Optional audit sink for logging payment flow events
- * @returns A wrapped fetch function that handles 402 responses automatically
+ * Uses official @x402/evm ExactEvmScheme when a viem ClientEvmSigner
+ * is provided (enabling standards-compliant EIP-3009 signed authorization).
+ * Falls back to EvmSchemeClient for backward-compatible X402Signer usage.
  *
  * @example
  * ```typescript
@@ -21,13 +22,13 @@ import { EvmSchemeClient } from "./scheme/EvmSchemeClient.js";
  *   { gatewayBaseUrl: "https://gateway.example.com" },
  *   signer
  * );
- *
- * const response = await fetchWithPayment("https://gateway.example.com/v1/chat");
+ * // Or with viem account directly:
+ * // const fetchWithPayment = createX402Fetch(config, signer.getViemAccount());
  * ```
  */
 export function createX402Fetch(
   config: X402ClientConfig,
-  signer: X402Signer,
+  signer: X402Signer | ClientEvmSigner,
   audit?: X402AuditSink,
 ): typeof fetch {
   const baseFetch = globalThis.fetch.bind(globalThis);
@@ -35,50 +36,67 @@ export function createX402Fetch(
   const maxRetries = config.maxRetries ?? 3;
   const requestTimeoutMs = config.requestTimeoutMs ?? 30000;
 
-  // Create the scheme client wrapping the signer
-  // Use "exact_evm" as the scheme name for EVM payments
-  const schemeClient = new EvmSchemeClient("exact_evm", signer);
+  // Resolve whether we have a viem ClientEvmSigner (has signTypedData)
+  const viemAccount = resolveViemAccount(signer);
 
-  // Determine the network identifier based on protocol version
-  const networkId = getNetworkId(signer.chainId, protocolVersion);
-
-  // Delegate protocol plumbing to V2ProtocolHandler
-  const protocolHandler = new V2ProtocolHandler(
-    networkId,
-    protocolVersion,
-    schemeClient,
-  );
-
-  // Wrap the base fetch with 402 → pay → retry handling
-  const wrappedFetch = protocolHandler.wrapFetch(baseFetch);
-
-  // Per-request context for audit correlation.
-  // Updated before each call so hooks reference the current requestId.
+  let wrappedFetch: typeof fetch;
   let currentRequestId = "";
 
-  // Register audit hooks once at creation time (not per-request) to prevent accumulation.
-  // Uses currentRequestId closure for per-request correlation.
-  if (audit) {
-    protocolHandler.registerAuditHooks(audit, () => currentRequestId);
+  if (viemAccount) {
+    // Use official @x402/evm ExactEvmScheme for standards-compliant EIP-3009 signing
+    const x402ClientInstance = new x402Client();
+    const evmScheme = new ExactEvmScheme(viemAccount);
+    const networkId = getNetworkId(signer, protocolVersion);
+    x402ClientInstance.register(networkId, evmScheme);
+    const httpClient = new x402HTTPClient(x402ClientInstance);
+    wrappedFetch = wrapFetchWithPayment(baseFetch, httpClient);
+
+    if (audit) {
+      x402ClientInstance.onAfterPaymentCreation(async (context) => {
+        audit({
+          at: new Date().toISOString(),
+          requestId: currentRequestId,
+          phase: "signed",
+          detail: `payment created for ${context.paymentRequired.resource?.url ?? "unknown"}`,
+        });
+      });
+      x402ClientInstance.onPaymentResponse(async (context) => {
+        const phase = context.settleResponse?.success ? "settled" : "error";
+        audit({
+          at: new Date().toISOString(),
+          requestId: currentRequestId,
+          phase,
+          detail: phase === "error" ? "payment failed" : `payment ${phase}`,
+        });
+      });
+    }
+  } else {
+    // Backward-compatible path: use EvmSchemeClient with updated signer
+    // (EvmSigner.signPayment now uses signTypedData per EIP-3009 standard)
+    const x402Signer = signer as X402Signer;
+    const schemeClient = new EvmSchemeClient("exact_evm", x402Signer);
+    const networkId = getNetworkId(signer, protocolVersion);
+    const protocolHandler = new V2ProtocolHandler(networkId, protocolVersion, schemeClient);
+    wrappedFetch = protocolHandler.wrapFetch(baseFetch);
+    if (audit) {
+      protocolHandler.registerAuditHooks(audit, () => currentRequestId);
+    }
   }
 
-  // Return a fetch function with timeout and retry logic
   return async (
     input: Parameters<typeof fetch>[0],
     init?: Parameters<typeof fetch>[1],
   ): Promise<Awaited<ReturnType<typeof fetch>>> => {
     const requestId = generateRequestId();
-    // Update the shared requestId so hooks reference the current request
     currentRequestId = requestId;
 
-    // Check if signer is ready before making request
-    if (!(await signer.isReady())) {
+    // Check readiness for X402Signer interface
+    if (isX402Signer(signer) && !(await signer.isReady())) {
       throw new Error(
         "x402: wallet signer not ready — connect wallet before paid requests (FR-CORE / FR-W1)",
       );
     }
 
-    // Emit initial audit event
     audit?.({
       at: new Date().toISOString(),
       requestId,
@@ -86,40 +104,25 @@ export function createX402Fetch(
       detail: `gateway=${config.gatewayBaseUrl} v=${protocolVersion}`,
     });
 
-    // Create abort controller for timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, requestTimeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), requestTimeoutMs);
 
     try {
-      // Merge signal with user-provided init if any
       const mergedInit: RequestInit = {
         ...init,
         signal: init?.signal
-          ? // If user provided a signal, we need to handle both
-            abortOnAnySignal(controller.signal, init.signal)
+          ? abortOnAnySignal(controller.signal, init.signal)
           : controller.signal,
       };
 
       let lastError: Error | undefined;
-
-      // Retry loop
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           const response = await wrappedFetch(input, mergedInit);
-
-          // If we got here, the request succeeded (either no 402 or payment succeeded)
           return response;
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
-
-          // Don't retry on the last attempt
-          if (attempt === maxRetries) {
-            break;
-          }
-
-          // Only retry on 402 or network errors
+          if (attempt === maxRetries) break;
           if (
             lastError.message.includes("402") ||
             lastError.message.includes("Payment Required") ||
@@ -132,96 +135,74 @@ export function createX402Fetch(
               phase: "retry",
               detail: `attempt ${attempt + 1}/${maxRetries}`,
             });
-            // Wait a bit before retrying (exponential backoff)
             await delay(1000 * Math.pow(2, attempt));
             continue;
           }
-
-          // For other errors, throw immediately
           throw lastError;
         }
       }
-
-      // All retries exhausted
-      throw (
-        lastError ||
-        new Error(`x402: max retries (${maxRetries}) exceeded`)
-      );
+      throw lastError || new Error(`x402: max retries (${maxRetries}) exceeded`);
     } finally {
       clearTimeout(timeoutId);
     }
   };
 }
 
-/**
- * Generate a unique request ID for audit logging.
+/** 
+ * Detect if signer is a raw viem ClientEvmSigner (not our X402Signer wrapper).
+ * EvmSigner (implements X402Signer) goes through the backward-compat path
+ * which uses EvmSchemeClient with "exact_evm" scheme name.
+ * Pure viem accounts go through the official ExactEvmScheme ("exact") path.
  */
+function resolveViemAccount(signer: X402Signer | ClientEvmSigner): ClientEvmSigner | null {
+  // X402Signer interface takes priority — use backward-compatible EvmSchemeClient
+  if (isX402Signer(signer)) return null;
+  // Raw viem account with signTypedData → use official ExactEvmScheme
+  if (typeof signer === "object" && signer !== null && "signTypedData" in signer) {
+    return signer as ClientEvmSigner;
+  }
+  return null;
+}
+
+/** Type guard for X402Signer */
+function isX402Signer(s: unknown): s is X402Signer {
+  return typeof s === "object" && s !== null && "isReady" in s;
+}
+
 function generateRequestId(): string {
   return crypto.randomUUID();
 }
 
-/**
- * Get the network identifier for x402 client registration.
- *
- * For V2: uses CAIP-2 format (eip155:8453)
- * For V1: uses simplified format (base-sepolia)
- */
-function getNetworkId(chainId: string, protocolVersion: number): string {
-  if (protocolVersion === 1) {
-    // V1 uses simplified network identifiers
-    if (chainId === "eip155:8453") {
-      return "base";
-    }
-    if (chainId === "eip155:84532") {
-      return "base-sepolia";
-    }
-    // Extract chain ID number from CAIP-2 format
-    const match = chainId.match(/eip155:(\d+)/);
-    if (match) {
-      // Map common chain IDs to V1 names
-      const chainNum = match[1];
-      if (chainNum === "1") return "ethereum";
-      if (chainNum === "137") return "polygon";
-      if (chainNum === "42161") return "arbitrum";
-      if (chainNum === "10") return "optimism";
-      // Note: 8453 (base) and 84532 (base-sepolia) are already handled above
-    }
-    return chainId.replace("eip155:", "");
-  }
+function getNetworkId(
+  signer: X402Signer | ClientEvmSigner,
+  protocolVersion: number,
+): Network {
+  const chainId = isX402Signer(signer)
+    ? signer.chainId
+    : "eip155:8453";
 
-  // V2 uses CAIP-2 format directly
-  return chainId;
+  if (protocolVersion === 1) {
+    return "base" as Network;
+  }
+  return chainId as Network;
 }
 
-/**
- * Create an abort signal that aborts when either signal aborts.
- */
-function abortOnAnySignal(
-  signal1: AbortSignal,
-  signal2: AbortSignal,
-): AbortSignal {
+function abortOnAnySignal(signal1: AbortSignal, signal2: AbortSignal): AbortSignal {
   const controller = new AbortController();
-
   const onAbort = () => {
     controller.abort();
     signal1.removeEventListener("abort", onAbort);
     signal2.removeEventListener("abort", onAbort);
   };
-
   if (signal1.aborted || signal2.aborted) {
     controller.abort();
     return controller.signal;
   }
-
   signal1.addEventListener("abort", onAbort);
   signal2.addEventListener("abort", onAbort);
-
   return controller.signal;
 }
 
-/**
- * Delay for a specified number of milliseconds.
- */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
