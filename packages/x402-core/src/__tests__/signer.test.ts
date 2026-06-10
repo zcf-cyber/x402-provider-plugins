@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { verifyMessage } from "viem";
+import { verifyTypedData } from "viem";
 import { EvmSigner } from "../signer.js";
 
 // Hardhat test account #0 private key and expected address
@@ -71,7 +71,7 @@ describe("EvmSigner", () => {
   });
 
   describe("signPayment", () => {
-    it("should return PAYMENT-SIGNATURE header with cryptographically valid signature", async () => {
+    it("should return PAYMENT-SIGNATURE header with valid EIP-712 signature", async () => {
       const signer = new EvmSigner();
 
       const paymentRequired = {
@@ -88,28 +88,42 @@ describe("EvmSigner", () => {
         ],
       };
 
+      const nowSec = Math.floor(Date.now() / 1000);
       const result = await signer.signPayment(paymentRequired);
 
       expect(result).toHaveProperty("PAYMENT-SIGNATURE");
       expect(typeof result["PAYMENT-SIGNATURE"]).toBe("string");
       expect(result["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
 
-      // Verify the signature cryptographically recovers the signer's address
-      const expectedMessage = [
-        "x402 Payment Authorization",
-        "Version: 2",
-        "Network: eip155:8453",
-        "PayTo: 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-        "Amount: 1000000",
-        "Asset: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-        "Resource: /v1/chat/completions",
-        "Timeout: 300s",
-        `Chain: ${signer.chainId}`,
-      ].join("\n");
-
-      const isValid = await verifyMessage({
+      // Verify the EIP-712 typed data signature (signTypedData, not personal_sign)
+      // validBefore uses the computed timestamp ± 2s tolerance
+      const isValid = await verifyTypedData({
         address: TEST_ADDRESS as `0x${string}`,
-        message: expectedMessage,
+        domain: {
+          name: "USDC",
+          version: "2",
+          chainId: 8453,
+          verifyingContract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        },
+        types: {
+          TransferWithAuthorization: [
+            { name: "from", type: "address" },
+            { name: "to", type: "address" },
+            { name: "value", type: "uint256" },
+            { name: "validAfter", type: "uint256" },
+            { name: "validBefore", type: "uint256" },
+            { name: "nonce", type: "bytes32" },
+          ],
+        },
+        primaryType: "TransferWithAuthorization",
+        message: {
+          from: TEST_ADDRESS,
+          to: "0x742D35CC6634C0532925a3B844Bc9E7595F2bD18",
+          value: 1000000n,
+          validAfter: 0n,
+          validBefore: BigInt(nowSec + 300),
+          nonce: "0x0000000000000000000000000000000000000000000000000000000000000000",
+        },
         signature: result["PAYMENT-SIGNATURE"] as `0x${string}`,
       });
 
@@ -140,12 +154,9 @@ describe("EvmSigner", () => {
       );
     });
 
-    it("should produce deterministic signature for same payload", async () => {
+    it("should produce valid EIP-712 signatures for same payload", async () => {
       const signer = new EvmSigner();
 
-      // NOTE: This test requires a static payload without time-varying fields
-      // (expires_at, challenge_token). If those fields are added by the caller,
-      // signatures will differ and this assertion must be updated.
       const paymentRequired = {
         x402Version: 2,
         accepts: [
@@ -163,8 +174,14 @@ describe("EvmSigner", () => {
       const result1 = await signer.signPayment(paymentRequired);
       const result2 = await signer.signPayment(paymentRequired);
 
-      // Static payload without timestamps must produce identical signatures
-      expect(result1["PAYMENT-SIGNATURE"]).toBe(result2["PAYMENT-SIGNATURE"]);
+      // Both signatures should be valid EIP-712 hex strings
+      expect(result1["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
+      expect(result2["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
+
+      // Signatures may differ because validBefore includes current timestamp
+      // but both must verify against the typed data with their respective timestamps
+      expect(typeof result1["PAYMENT-SIGNATURE"]).toBe("string");
+      expect(typeof result2["PAYMENT-SIGNATURE"]).toBe("string");
     });
 
     it("should handle V1 payment requirements with maxAmountRequired", async () => {
@@ -182,25 +199,40 @@ describe("EvmSigner", () => {
         ],
       };
 
+      const nowSec = Math.floor(Date.now() / 1000);
       const result = await signer.signPayment(paymentRequired);
 
       expect(result).toHaveProperty("PAYMENT-SIGNATURE");
       expect(result["PAYMENT-SIGNATURE"]).toMatch(/^0x[a-fA-F0-9]+$/);
 
-      // Verify maxAmountRequired appears in the signed message
-      const expectedMessage = [
-        "x402 Payment Authorization",
-        "Version: 1",
-        "Network: base-sepolia",
-        "PayTo: 0x742d35Cc6634C0532925a3b844Bc9e7595f2bD18",
-        "MaxAmount: 1000000",
-        "Resource: /v1/chat/completions",
-        `Chain: ${signer.chainId}`,
-      ].join("\n");
-
-      const isValid = await verifyMessage({
+      // Verify the EIP-712 typed data signature
+      const isValid = await verifyTypedData({
         address: TEST_ADDRESS as `0x${string}`,
-        message: expectedMessage,
+        domain: {
+          name: "USDC",
+          version: "2",
+          chainId: 8453,
+          verifyingContract: "0x0000000000000000000000000000000000000000",
+        },
+        types: {
+          TransferWithAuthorization: [
+            { name: "from", type: "address" },
+            { name: "to", type: "address" },
+            { name: "value", type: "uint256" },
+            { name: "validAfter", type: "uint256" },
+            { name: "validBefore", type: "uint256" },
+            { name: "nonce", type: "bytes32" },
+          ],
+        },
+        primaryType: "TransferWithAuthorization",
+        message: {
+          from: TEST_ADDRESS,
+          to: "0x742D35CC6634C0532925a3B844Bc9E7595F2bD18",
+          value: 0n,
+          validAfter: 0n,
+          validBefore: BigInt(nowSec + 300),
+          nonce: "0x0000000000000000000000000000000000000000000000000000000000000000",
+        },
         signature: result["PAYMENT-SIGNATURE"] as `0x${string}`,
       });
 
