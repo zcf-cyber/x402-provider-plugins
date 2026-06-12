@@ -146,9 +146,24 @@ export class EvmSigner implements X402Signer {
     // Extract numeric chain ID from CAIP-2 format (eip155:8453 → 8453)
     const chainIdNum = this.parseChainIdNumber();
 
-    // Default token name/version (caller overrides for real tokens via env)
-    const tokenName = (req.tokenName as string) ?? process.env.X402_TOKEN_NAME ?? "USDC";
-    const tokenVersion = (req.tokenVersion as string) ?? process.env.X402_TOKEN_VERSION ?? "2";
+    // @issue #51 — read token EIP-712 domain parameters from gateway-provided
+    // extra (aligns with @x402/evm signEIP3009Authorization). Falls back to
+    // env vars for backward compatibility, then to defaults.
+    const extra = (accept.extra as Record<string, unknown> | undefined) ?? {};
+    const tokenName = (extra.name as string) ??
+      (req.tokenName as string) ??
+      process.env.X402_TOKEN_NAME ??
+      "USDC";
+    const tokenVersion = (extra.version as string) ??
+      (req.tokenVersion as string) ??
+      process.env.X402_TOKEN_VERSION ??
+      "2";
+
+    // @issue #51 — validate amount is a valid integer string for BigInt.
+    // Non-integer amounts (e.g. "0.006195042") cause opaque runtime errors
+    // downstream. The official @x402/evm signEIP3009Authorization uses
+    // BigInt() which throws on non-integer strings.
+    this.validateBigIntAmount(amount, "amount");
 
     return {
       domain: {
@@ -202,6 +217,36 @@ export class EvmSigner implements X402Signer {
   private parseChainIdNumber(): number {
     const match = this._chainId.match(/eip155:(\d+)/);
     return match ? parseInt(match[1], 10) : 8453;
+  }
+
+  /**
+   * Validate that a value string represents a valid unsigned integer
+   * suitable for BigInt conversion.
+   *
+   * @issue #51 — non-integer amount strings (e.g. "0.006195042") cause
+   *   opaque runtime errors downstream (e.g. "Cannot convert a Symbol to
+   *   a BigInt"). The official @x402/evm signEIP3009Authorization uses
+   *   BigInt() which throws on non-integer values.
+   */
+  private validateBigIntAmount(value: string, field: string): void {
+    const trimmed = value.trim();
+    if (trimmed === "" || trimmed === "0") return;
+    // Must be digits only (no decimal point, no scientific notation)
+    if (!/^[1-9][0-9]*$/.test(trimmed)) {
+      throw new Error(
+        `x402: invalid ${field} "${value.slice(0, 32)}" — ` +
+        `expected unsigned integer (e.g. "1000000"), got non-integer or malformed value. ` +
+        `The gateway may be returning a decimal amount which requires token-decimal conversion.`,
+      );
+    }
+    // Verify BigInt conversion succeeds
+    try {
+      BigInt(trimmed);
+    } catch {
+      throw new Error(
+        `x402: invalid ${field} "${value.slice(0, 32)}" — cannot convert to BigInt`,
+      );
+    }
   }
 }
 

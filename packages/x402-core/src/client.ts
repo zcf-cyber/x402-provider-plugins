@@ -11,9 +11,18 @@ import type { ClientEvmSigner } from "@x402/evm";
  * Creates a fetch function that handles HTTP 402 and official x402 headers
  * via @x402/fetch with scheme clients wired to the signer.
  *
- * Uses official @x402/evm ExactEvmScheme when a viem ClientEvmSigner
- * is provided (enabling standards-compliant EIP-3009 signed authorization).
- * Falls back to EvmSchemeClient for backward-compatible X402Signer usage.
+ * Uses the official @x402/evm ExactEvmScheme ("exact" scheme) for
+ * standards-compliant EIP-3009 signed authorization. When an EvmSigner
+ * is passed, its underlying viem account is extracted automatically via
+ * getViemAccount() and routed through the official path.
+ *
+ * Raw viem accounts (ClientEvmSigner) are also accepted directly.
+ * X402Signer implementations without getViemAccount() fall back to
+ * the generic EvmSchemeClient path.
+ *
+ * @issue #51 — EvmSigner previously used a manual EIP-712 construction
+ *   (EvmSchemeClient with scheme "exact_evm") that misaligned with the
+ *   official @x402/evm standard. Now unified under ExactEvmScheme.
  *
  * @example
  * ```typescript
@@ -74,7 +83,7 @@ export function createX402Fetch(
     // Backward-compatible path: use EvmSchemeClient with updated signer
     // (EvmSigner.signPayment now uses signTypedData per EIP-3009 standard)
     const x402Signer = signer as X402Signer;
-    const schemeClient = new EvmSchemeClient("exact_evm", x402Signer);
+    const schemeClient = new EvmSchemeClient("exact", x402Signer);
     const networkId = getNetworkId(signer, protocolVersion);
     const protocolHandler = new V2ProtocolHandler(networkId, protocolVersion, schemeClient);
     wrappedFetch = protocolHandler.wrapFetch(baseFetch);
@@ -149,18 +158,41 @@ export function createX402Fetch(
 }
 
 /** 
- * Detect if signer is a raw viem ClientEvmSigner (not our X402Signer wrapper).
- * EvmSigner (implements X402Signer) goes through the backward-compat path
- * which uses EvmSchemeClient with "exact_evm" scheme name.
- * Pure viem accounts go through the official ExactEvmScheme ("exact") path.
+ * Resolve the underlying viem ClientEvmSigner for use with official
+ * @x402/evm ExactEvmScheme ("exact" scheme, fully EIP-3009 compliant).
+ *
+ * Order of precedence:
+ * 1. X402Signer with getViemAccount() (e.g. EvmSigner) → extract viem account
+ * 2. Raw viem account with signTypedData → use directly as ClientEvmSigner
+ * 3. X402Signer without viem account → returns null (backward-compat path)
+ *
+ * @issue #51 — EvmSigner previously bypassed the official path entirely,
+ *   causing EIP-712 domain misalignment (token name/version from env instead
+ *   of gateway-provided extra, missing BigInt validation, wrong scheme name).
  */
 function resolveViemAccount(signer: X402Signer | ClientEvmSigner): ClientEvmSigner | null {
-  // X402Signer interface takes priority — use backward-compatible EvmSchemeClient
-  if (isX402Signer(signer)) return null;
-  // Raw viem account with signTypedData → use official ExactEvmScheme
-  if (typeof signer === "object" && signer !== null && "signTypedData" in signer) {
+  // Priority 1: signer exposes a viem account via getViemAccount()
+  if (
+    typeof signer === "object" &&
+    signer !== null &&
+    "getViemAccount" in signer
+  ) {
+    const getViemAccount = (signer as Record<string, unknown>)["getViemAccount"];
+    if (typeof getViemAccount === "function") {
+      // Use .call(signer) to preserve `this` binding on the method
+      const account = (getViemAccount as () => ClientEvmSigner | null).call(signer);
+      if (account && "signTypedData" in account) return account;
+    }
+  }
+  // Priority 2: Raw viem account with signTypedData → use directly
+  if (
+    typeof signer === "object" &&
+    signer !== null &&
+    "signTypedData" in signer
+  ) {
     return signer as ClientEvmSigner;
   }
+  // Priority 3: X402Signer without viem account → backward-compat path
   return null;
 }
 
@@ -179,7 +211,7 @@ function getNetworkId(
 ): Network {
   const chainId = isX402Signer(signer)
     ? signer.chainId
-    : "eip155:8453";
+    : (process.env.X402_CHAIN_ID ?? "eip155:8453");
 
   if (protocolVersion === 1) {
     return "base" as Network;
