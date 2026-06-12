@@ -321,12 +321,13 @@ describe("createX402Fetch", () => {
               resource: { url: "/v1/chat", serviceName: "test" },
               accepts: [
                 {
-                  scheme: "exact_evm",
+                  scheme: "exact",
                   network: "eip155:8453",
                   payTo: "0x0000000000000000000000000000000000000000",
                   amount: "1",
                   asset: "0x0000000000000000000000000000000000000000",
                   maxTimeoutSeconds: 300,
+                  extra: { name: "USDC", version: "2" },
                 },
               ],
             }),
