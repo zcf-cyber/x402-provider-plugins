@@ -104,12 +104,13 @@ describe("x402-core integration against mock gateway", () => {
           x402Version: 2,
           accepts: [
             {
-              scheme: "exact_evm",
+              scheme: "exact",
               network: "eip155:8453",
               payTo: "0x0",
               amount: "1",
               asset: "0x0",
               maxTimeoutSeconds: 300,
+              extra: { name: "USDC", version: "2" },
             },
           ],
         }),
@@ -207,7 +208,7 @@ describe("Mock ProtocolHandler integration", () => {
       count++;
       const p = Buffer.from(JSON.stringify({
         x402Version: 2,
-        accepts: [{ scheme: "exact_evm", network: "eip155:8453", payTo: "0x0", amount: "1", asset: "0x0", maxTimeoutSeconds: 300 }],
+        accepts: [{ scheme: "exact", network: "eip155:8453", payTo: "0x0", amount: "1", asset: "0x0", maxTimeoutSeconds: 300, extra: { name: "USDC", version: "2" } }],
       })).toString("base64");
       if (count % 2 === 1) {
         res.writeHead(402, { "PAYMENT-REQUIRED": p, "Content-Type": "application/json" });

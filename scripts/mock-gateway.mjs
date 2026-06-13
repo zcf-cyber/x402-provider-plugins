@@ -14,7 +14,8 @@ import http from "http";
 import crypto from "crypto";
 
 const args = process.argv.slice(2);
-const portArg = args.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "8080";
+const portArg =
+  args.find((a) => a.startsWith("--port="))?.split("=")[1] ?? "8080";
 const port = parseInt(portArg, 10);
 if (isNaN(port) || port < 1 || port > 65535) {
   console.error(`x402: invalid port "${portArg}" — must be 1–65535`);
@@ -39,13 +40,15 @@ function createPaymentRequired() {
     x402Version: 2,
     accepts: [
       {
-        scheme: "exact_evm",
+        scheme: "exact",
         network: NETWORK,
         payTo: PAY_TO,
         amount: requireAmount,
         asset: ASSET,
         maxTimeoutSeconds: 300,
         extra: {
+          name: "USD Coin",
+          version: "2",
           quote_id: `mock-quote-${crypto.randomUUID()}`,
           expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
           request_hash: "0x" + crypto.randomBytes(16).toString("hex"),
