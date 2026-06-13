@@ -8,6 +8,6 @@ import type { SchemeNetworkClient } from "@x402/core/types";
  * without touching client.ts or ProtocolHandler code.
  */
 export interface SchemeRegistry {
-  /** Resolve a scheme network client by its scheme name (e.g. "exact_evm") */
+  /** Resolve a scheme network client by its scheme name (e.g. "exact") */
   getScheme(name: string): SchemeNetworkClient | undefined;
 }

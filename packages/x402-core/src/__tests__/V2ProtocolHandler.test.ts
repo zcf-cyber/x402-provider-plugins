@@ -22,7 +22,7 @@ vi.mock("@x402/core/client", () => ({
 
 import { V2ProtocolHandler } from "../protocol/V2ProtocolHandler.js";
 
-const mockClient = { scheme: "exact_evm", createPaymentPayload: vi.fn() };
+const mockClient = { scheme: "exact", createPaymentPayload: vi.fn() };
 
 describe("V2ProtocolHandler", () => {
   beforeEach(() => {
